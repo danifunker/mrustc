@@ -855,7 +855,9 @@ namespace
             for(const auto& sv : kv.value.m_sub_values)
             {
                 const auto& s = sv.as_string();
-                if(s == "rlib") {
+                // "lib" is cargo's alias for the default library type; treat it
+                // as rlib (mrustc only produces rlibs for library crates).
+                if(s == "rlib" || s == "lib") {
                     target.m_crate_types.push_back(PackageTarget::CrateType::rlib);
                 }
                 else if(s == "dylib") {
