@@ -69,7 +69,13 @@ const TargetArch ARCH_POWERPC64LE = {
 const TargetArch ARCH_POWERPC = {
     "powerpc",
     32, true,
-    { /*atomic(u8)=*/true, true, true, false,  true },
+    // 32-bit PowerPC has no lock-free 8-byte atomic instruction, but the C11
+    // atomics this backend emits do not require one: `_Atomic uint64_t` lowers
+    // to `__atomic_*_8` calls that libatomic implements with a lock, and every
+    // powerpc target here already links it (`-l atomic`). Reporting u64 as
+    // unavailable instead cfg's `AtomicU64` out of libcore, which libstd's
+    // `sys::unix::time` uses unconditionally on macOS - so libstd cannot build.
+    { /*atomic(u8)=*/true, true, true, true,  true },
     TargetArch::Alignments(2, 4, 8, 8, 4, 8, 4)
 };
 const TargetArch ARCH_RISCV64 = {
@@ -633,8 +639,9 @@ namespace
         else if(target_name == "powerpc-apple-darwin")
         {
             // NOTE: OSX uses Mach-O binaries, which don't fully support the defaults used for GNU targets
+            // NOTE: 32-bit PowerPC needs libatomic for the 8-byte atomics (see ARCH_POWERPC)
             return TargetSpec {
-                "unix", "macos", "gnu", {CodegenMode::Gnu11, true, "powerpc-apple-darwin", {}, {}},
+                "unix", "macos", "gnu", {CodegenMode::Gnu11, true, "powerpc-apple-darwin", {}, {}, {"-l", "atomic"}},
                 ARCH_POWERPC
                 };
         }
@@ -1079,9 +1086,25 @@ namespace {
         {
             auto align = e.align;
 
-            // PowerPC 32-bit ABI
+            // PowerPC 32-bit ABI ("power" alignment, as used by Darwin/AIX)
             // First element uses natural alignment, subsequent elements with natural alignment
             // >= 4 and up to 8 use embedding = 4. Skip ZST.
+            //
+            // This has to apply to Rust's own types too, not just `repr(C)`: mrustc emits
+            // every struct as a plain C struct and lets the C compiler lay it out, so
+            // mrustc's model must match gcc's or the emitted sizeof/alignof asserts fail.
+            //
+            // The cost is that a Rust type can end up with a field at an offset that does
+            // not satisfy `align_of::<FieldTy>()` - `std::thread::Inner` puts its
+            // `ThreadId` (a `NonZeroU64`, align 8) at offset 84. The generated C is still
+            // correct (gcc knows the member is 4-aligned and emits accesses to match), but
+            // `ptr::write`'s `assert_unsafe_precondition!` disagrees, which aborts every
+            // program during `rt::init`. Hence the PPC stdlib is built without
+            // `debug_assertions`. See docs/build-ppc-mrustc.md.
+            //
+            // 32-bit PowerPC is the only arch here where this arises: it is the sole
+            // target with 32-bit pointers but 8-byte-aligned u64 (i586 aligns u64 to 4, so
+            // the rule would be a no-op there).
             if(Target_GetCurSpec().m_arch.m_name == "powerpc")
             {
                 if ( e.size > 0 )

@@ -903,7 +903,14 @@ void Job_Build::push_args_common(StringList& args, const helpers::path& outfile,
     if( parent.m_opts.enable_debug ) {
         args.push_back("-g");
     }
-    if( true ) {
+    // `debug_assertions` also switches on libcore's `assert_unsafe_precondition!`.
+    // Those assert Rust-level invariants that a target whose C ABI lays structs out
+    // differently from Rust cannot satisfy: on powerpc-apple-darwin the "power"
+    // alignment rule (see src/trans/target.cpp) puts an 8-aligned field at a
+    // 4-aligned offset, so `ptr::write`'s precondition aborts every program during
+    // `std::rt::init`. The emitted C is still correct - gcc knows the member's real
+    // alignment and emits matching accesses - only the assertion disagrees.
+    if( !getenv("MINICARGO_NO_DEBUG_ASSERTIONS") ) {
         if( parent.is_rustc() ) {
             args.push_back("-C"); args.push_back("debug-assertions");
         }
