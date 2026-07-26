@@ -2078,7 +2078,19 @@ namespace {
                 assert(repr->fields[i].offset == 0);
                 m_of << "\t"; emit_ctype( repr->fields[i].ty, FMT_CB(ss, ss << "var_" << i;) ); m_of << ";\n";
             }
-            m_of << "};\n";
+            m_of << "}";
+            // Pin the alignment rather than let the C compiler derive it. Under the
+            // PowerPC "power" alignment ABI a union takes the alignment of its *first*
+            // member, and the variants are emitted in declaration order - so
+            // `MaybeUninit<u128>`, whose first variant is the unit type, comes out
+            // 1-aligned to gcc while mrustc computed 8, and every enclosing type then
+            // fails its `alignof_assert`. Union members all sit at offset 0, so pinning
+            // the alignment moves nothing else.
+            if( m_compiler == Compiler::Gcc && repr->align > 0 )
+            {
+                m_of << " __attribute__((__aligned__(" << repr->align << ")))";
+            }
+            m_of << ";\n";
             if( true && repr->size > 0 )
             {
                 m_of << "typedef char sizeof_assert_" << Trans_Mangle(p) << "[ (sizeof(union u_" << Trans_Mangle(p) << ") == " << repr->size << ") ? 1 : -1 ];\n";
