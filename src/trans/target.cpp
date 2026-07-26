@@ -1938,6 +1938,10 @@ namespace {
                             // Generate raw struct reprs for all variants
                             // - Add `non_niche_offset` to all variants
                             assert(reprs.size() == variants.size());
+                            // The size/alignment of the union of the *final* variant layouts,
+                            // which is what codegen emits. See the note where these are used.
+                            size_t final_size = 0;
+                            size_t final_align = 1;
                             for(size_t i = 0; i < reprs.size(); i ++)
                             {
                                 if( e[i].type != HIR::TypeRef::new_unit() )
@@ -2004,19 +2008,50 @@ namespace {
                                         assert(reprs[i]->size <= max_size);
                                         assert(reprs[i]->align <= max_align);
                                     }
+                                    final_size  = std::max(final_size , reprs[i]->size );
+                                    final_align = std::max(final_align, reprs[i]->align);
                                     set_type_repr(sp, variants[i].type, std::move(reprs[i]));
                                 }
                                 else
                                 {
                                     // Note: unit type (any empty type) doesn't need the tag added
                                     // NOTE: Unit type should already have a repr, but make sure
-                                    Target_GetTypeRepr(sp, resolve, variants[i].type);
+                                    if( const auto* r = Target_GetTypeRepr(sp, resolve, variants[i].type) ) {
+                                        final_size  = std::max(final_size , r->size );
+                                        final_align = std::max(final_align, r->align);
+                                    }
                                 }
                                 rv.fields.push_back(TypeRepr::Field { 0, mv$(variants[i].type) });
                             }
 
                             rv.size = max_size;
                             rv.align = max_align;
+
+                            // `max_align` came from per-variant layouts built *before* the tag
+                            // field was added, so a payload that is not first in the final
+                            // layout was laid out as though it were. On a target whose C ABI
+                            // caps the alignment of a non-leading member (see
+                            // `target_caps_member_alignment`) that over-states the variant's
+                            // alignment, and the enum's with it: on PowerPC
+                            // `Result<u64, Error>` came out 16/8 while the emitted C - a union
+                            // of the final variant structs, both 12/4 - is 12/4, and the
+                            // `sizeof_assert` mrustc writes alongside it failed to compile.
+                            //
+                            // Take the answer from those final layouts, since they are exactly
+                            // what codegen emits. Guarded on the capping ABI: elsewhere the two
+                            // agree by construction, and this must not perturb any other target.
+                            if( target_caps_member_alignment() && final_size > 0 )
+                            {
+                                size_t sz = final_size;
+                                while( sz % final_align != 0 )
+                                    sz ++;
+                                if( sz != rv.size || final_align != rv.align ) {
+                                    DEBUG("Capping ABI: " << ty << " " << rv.size << "/" << rv.align
+                                        << " -> " << sz << "/" << final_align << " (union of the final variants)");
+                                    rv.size = sz;
+                                    rv.align = final_align;
+                                }
+                            }
 
                             // Ensure that the tag offset is still valid
                             auto tag_offset = get_offset(sp, resolve, &rv, niche_path);
