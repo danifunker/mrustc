@@ -1781,9 +1781,15 @@ namespace {
                 // disagree the alignment has to be forced explicitly, or both the
                 // sizeof and alignof assertions emitted below fail to compile -
                 // `libc`'s `tcp_connection_info` is the first such struct.
+                //
+                // The cap does not apply to a member whose alignment was requested
+                // explicitly (`repr(align(N))` at any depth) - gcc exempts those, so the
+                // C compiler keeps the higher alignment and mrustc must too. This has to
+                // agree with the identical test in `make_type_repr_struct__inner`.
                 {
                     size_t al_c = al;
-                    if( Target_GetCurSpec().m_arch.m_name == "powerpc" && sz > 0 && ent.offset != 0 && al_c > 4 ) {
+                    if( Target_CapsMemberAlignment() && sz > 0 && ent.offset != 0 && al_c > 4
+                        && !Target_TypeHasUserAlignment(sp, m_resolve, ty) ) {
                         al_c = 4;
                     }
                     c_max_align = std::max(c_max_align, al_c);

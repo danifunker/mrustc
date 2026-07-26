@@ -987,10 +987,75 @@ namespace {
         size_t  size;
         size_t  align;
         HIR::TypeRef    ty;
+        /// `align` came from an explicit `repr(align(N))` somewhere inside `ty`.
+        /// See `TypeRepr::user_align` and `target_caps_member_alignment`.
+        bool    user_align = false;
     };
     ::std::ostream& operator<<(std::ostream& os, const Ent& e) {
-        os << "Ent { #" << e.field << ": s=" << e.size << " a=" << e.align << " : " << e.ty << " }";
+        os << "Ent { #" << e.field << ": s=" << e.size << " a=" << e.align << (e.user_align ? "!" : "") << " : " << e.ty << " }";
         return os;
+    }
+
+    /// Does this target's C ABI cap the alignment of a struct member that is not the first?
+    ///
+    /// Darwin/PowerPC's "power" alignment ABI does: the first member keeps its natural
+    /// alignment and later members are capped to 4. mrustc has to model this because it
+    /// emits plain C structs and lets the C compiler lay them out - if the two disagree,
+    /// the `sizeof_assert` / `alignof_assert` typedefs emitted alongside each struct fail
+    /// to compile. 32-bit PowerPC is the only arch here where it bites, being the only
+    /// target with 32-bit pointers but 8-byte-aligned `u64` (i586 aligns `u64` to 4, so
+    /// the rule would be a no-op there).
+    bool target_caps_member_alignment()
+    {
+        return Target_GetCurSpec().m_arch.m_name == "powerpc";
+    }
+
+    /// Does this type's alignment come from an explicit `repr(align(N))` rather than from
+    /// the natural alignment of its members?
+    ///
+    /// gcc tracks the same thing as `TYPE_USER_ALIGN`, and it decides whether the
+    /// member-alignment cap above applies: `stor-layout.c:place_field` runs
+    /// `ADJUST_FIELD_ALIGN` (where the Darwin/PowerPC rule lives) only
+    /// `if (! DECL_USER_ALIGN (field))`. So a `repr(align(8))` type stays 8-aligned however
+    /// deeply it is nested, and every aggregate containing it inherits that exemption.
+    /// Verified against gcc 10.5 on PowerPC via `scripts/ppc-layout-probe.py` in the
+    /// rusty-backup tree.
+    bool type_has_user_alignment(const Span& sp, const StaticTraitResolve& resolve, const ::HIR::TypeRef& ty)
+    {
+        // Arrays and slices inherit it from the element type, as in gcc's `layout_type`.
+        if( const auto* te = ty.data().opt_Array() ) {
+            return type_has_user_alignment(sp, resolve, te->inner);
+        }
+        if( const auto* te = ty.data().opt_Slice() ) {
+            return type_has_user_alignment(sp, resolve, te->inner);
+        }
+        // Aggregates cache it on their repr; everything else (primitives, pointers,
+        // function pointers, ...) is naturally aligned by definition.
+        if( ty.data().is_Tuple() || (ty.data().is_Path() && (
+                ty.data().as_Path().binding.is_Struct()
+                || ty.data().as_Path().binding.is_Union()
+                || ty.data().as_Path().binding.is_Enum()
+                )) )
+        {
+            const auto* repr = Target_GetTypeRepr(sp, resolve, ty);
+            return repr && repr->user_align;
+        }
+        return false;
+    }
+
+    /// Build an `Ent` for a field of type `ty`, filling in the user-alignment flag.
+    bool make_field_ent(const Span& sp, const StaticTraitResolve& resolve, unsigned idx, ::HIR::TypeRef ty, Ent& out)
+    {
+        size_t  size, align;
+        if( !Target_GetSizeAndAlignOf(sp, resolve, ty, size, align) )
+        {
+            DEBUG("Can't get size/align of " << ty);
+            return false;
+        }
+        out = Ent { idx, size, align, HIR::TypeRef(), false };
+        out.user_align = type_has_user_alignment(sp, resolve, ty);
+        out.ty = mv$(ty);
+        return true;
     }
     bool struct_enumerate_fields(const Span& sp, const StaticTraitResolve& resolve, const ::HIR::TypeRef& ty, ::std::vector<Ent>& ents)
     {
@@ -1008,30 +1073,24 @@ namespace {
             unsigned int idx = 0;
             for(const auto& e : se)
             {
-                auto ty = monomorph(e.ent);
-                size_t  size, align;
-                if( !Target_GetSizeAndAlignOf(sp, resolve, ty, size,align) )
-                {
-                    DEBUG("Can't get size/align of " << ty);
+                Ent ent;
+                if( !make_field_ent(sp, resolve, idx, monomorph(e.ent), ent) )
                     return false;
-                }
-                DEBUG("#" << idx << ": s=" << size << ",a=" << align << " " << ty);
-                ents.push_back(Ent { idx++, size, align, mv$(ty) });
+                DEBUG("#" << idx << ": " << ent);
+                idx ++;
+                ents.push_back(mv$(ent));
             }
             }
         TU_ARMA(Named, se) {
             unsigned int idx = 0;
             for(const auto& e : se)
             {
-                auto ty = monomorph(e.ty);
-                size_t  size, align;
-                if( !Target_GetSizeAndAlignOf(sp, resolve, ty, size,align) )
-                {
-                    DEBUG("Can't get size/align of " << ty);
+                Ent ent;
+                if( !make_field_ent(sp, resolve, idx, monomorph(e.ty), ent) )
                     return false;
-                }
-                DEBUG("#" << idx << " " << e.name << ": s=" << size << ",a=" << align << " " << ty);
-                ents.push_back(Ent { idx++, size, align, mv$(ty) });
+                DEBUG("#" << idx << " " << e.name << ": " << ent);
+                idx ++;
+                ents.push_back(mv$(ent));
             }
             }
         }
@@ -1102,19 +1161,28 @@ namespace {
             // program during `rt::init`. Hence the PPC stdlib is built without
             // `debug_assertions`. See docs/build-ppc-mrustc.md.
             //
-            // 32-bit PowerPC is the only arch here where this arises: it is the sole
-            // target with 32-bit pointers but 8-byte-aligned u64 (i586 aligns u64 to 4, so
-            // the rule would be a no-op there).
-            if(Target_GetCurSpec().m_arch.m_name == "powerpc")
+            // The cap applies to *natural* alignment only. A field whose alignment was
+            // asked for explicitly (`repr(align(N))`, at any nesting depth) keeps it -
+            // gcc guards its equivalent with `if (! DECL_USER_ALIGN (field))`, so an
+            // explicitly-aligned member raises the enclosing struct's alignment even when
+            // it is not first. `lzfse_rust`'s `FseCore` is the case that found this: it
+            // embeds a `repr(align(8))` `VEntry` array 808 bytes in, and gcc gives the
+            // whole struct align 8 where mrustc used to say 4.
+            //
+            // See `target_caps_member_alignment` for why any of this is modelled here.
+            if(target_caps_member_alignment())
             {
                 if ( e.size > 0 )
                 {
-                    if( !is_first_field && align >= 4 && align <= 8 )
+                    if( !is_first_field && !e.user_align && align >= 4 && align <= 8 )
                     {
                         align = 4;
                     }
                     is_first_field = false;
                 }
+            }
+            if( e.user_align ) {
+                rv.user_align = true;
             }
 
             // Increase offset to fit alignment
@@ -1150,6 +1218,8 @@ namespace {
         }
         if(forced_alignment > 0) {
             max_align = std::max(max_align, static_cast<size_t>(forced_alignment));
+            // `repr(align(N))` - this is the root of a user-alignment chain.
+            rv.user_align = true;
         }
         // If not packing (and the size isn't infinite/unsized) then round the size up to the alignment
         if( cur_ofs != SIZE_MAX )
@@ -1216,13 +1286,11 @@ namespace {
             unsigned int idx = 0;
             for(const auto& t : *te)
             {
-                size_t  size, align;
-                if( !Target_GetSizeAndAlignOf(sp, resolve, t, size,align) )
-                {
-                    DEBUG("Can't get size/align of " << t);
+                Ent ent;
+                if( !make_field_ent(sp, resolve, idx, t.clone(), ent) )
                     return nullptr;
-                }
-                ents.push_back(Ent { idx++, size, align, t.clone() });
+                idx ++;
+                ents.push_back(mv$(ent));
             }
             sorting = StructSorting::All;
         }
@@ -2150,6 +2218,17 @@ namespace {
                 << " }");
             }
         }
+
+        // An enum inherits user-alignment from any variant, as in gcc. Every branch above
+        // has already forced each variant type's repr to be computed (via
+        // `Target_GetSizeAndAlignOf`, `Target_GetTypeRepr` or `set_type_repr`), so this
+        // only reads the cache and cannot recurse back into this enum.
+        for(const auto& f : rv.fields) {
+            if( type_has_user_alignment(sp, resolve, f.ty) ) {
+                rv.user_align = true;
+                break;
+            }
+        }
         return box$(rv);
     }
     ::std::unique_ptr<TypeRepr> make_type_repr_union(const Span& sp, const StaticTraitResolve& resolve, const ::HIR::TypeRef& ty)
@@ -2163,6 +2242,17 @@ namespace {
         };
 
         TypeRepr  rv;
+        // codegen_c pins every union's alignment with an explicit
+        // `__attribute__((aligned))` rather than letting the C compiler derive it (a
+        // union takes its *first* member's alignment under the power ABI, and the
+        // variants are emitted in declaration order, so `MaybeUninit<u128>` would come
+        // out 1-aligned). That attribute is user-alignment as far as gcc is concerned,
+        // so it exempts the union - and every aggregate containing it - from the
+        // member-alignment cap. The model has to know that, or it under-computes the
+        // enclosing type: `BTreeMap`'s `LeafNode<String, Metric>` holds a
+        // `[MaybeUninit<Metric>; 11]` 140 bytes in and gcc makes the whole node 320/8
+        // where mrustc said 316/4.
+        rv.user_align = true;
         for(const auto& var : unn.m_variants)
         {
             rv.fields.push_back({ 0, monomorph(var.ty) });
@@ -2178,6 +2268,10 @@ namespace {
             }
             rv.size  = ::std::max(rv.size , size );
             rv.align = ::std::max(rv.align, align);
+            // A union inherits user-alignment from any member, as in gcc.
+            if( type_has_user_alignment(sp, resolve, rv.fields.back().ty) ) {
+                rv.user_align = true;
+            }
         }
         // Round the size to be a multiple of align
         if( rv.size % rv.align != 0 )
@@ -2241,6 +2335,14 @@ namespace {
 void Target_ForceTypeRepr(const Span& sp, const ::HIR::TypeRef& ty, TypeRepr repr)
 {
     set_type_repr(sp, ty, box$(repr));
+}
+bool Target_CapsMemberAlignment()
+{
+    return target_caps_member_alignment();
+}
+bool Target_TypeHasUserAlignment(const Span& sp, const StaticTraitResolve& resolve, const ::HIR::TypeRef& ty)
+{
+    return type_has_user_alignment(sp, resolve, ty);
 }
 const TypeRepr* Target_GetTypeRepr(const Span& sp, const StaticTraitResolve& resolve, const ::HIR::TypeRef& ty)
 {
