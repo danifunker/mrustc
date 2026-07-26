@@ -38,6 +38,24 @@ bool deferred_codegen_enabled() {
     return getenv("MINICARGO_DEFER_CODEGEN") != 0;
 }
 
+/// Repoint a dependency at the deferred codegen job instead of the transpile job.
+///
+/// This was open-coded as `if( d[d.size()-1] != ')' ) d += " (codegen)";`, where the
+/// test is meant to read "not already suffixed". It doesn't: a host crate's job name
+/// already ends in "(host)", so its dependencies kept pointing at the transpile job
+/// and could be linked against before codegen had produced their object file.
+/// `crc32c`'s build script is the case - it links `semver` and `rustc_version`, both
+/// host crates, and ld fails on the missing `.rlib.o`. It presents as an intermittent
+/// race because it only fires when the scheduler reaches the dependent first.
+void make_dep_codegen(::std::string& d) {
+    static const char SUFFIX[] = " (codegen)";
+    const size_t n = sizeof(SUFFIX) - 1;
+    if( d.size() >= n && d.compare(d.size() - n, n, SUFFIX) == 0 ) {
+        return;
+    }
+    d += SUFFIX;
+}
+
 struct RunState
 {
     BuildOptions&   m_opts;
@@ -439,9 +457,7 @@ bool BuildList::build(BuildOptions opts, unsigned num_jobs, bool dry_run)
                     // - For now, just need to make sure that the codegen is completed before build
                     if( deferred_codegen_enabled() ) {
                         for(auto& d : job_bs_build->m_dependencies) {
-                            if( d[d.size()-1] != ')' ) {
-                                d += " (codegen)";
-                            }
+                            make_dep_codegen(d);
                         }
                     }
                     this->add_job(std::move(job_bs_build), script_ts, bs_is_dirty);
@@ -543,9 +559,7 @@ bool BuildList::build(BuildOptions opts, unsigned num_jobs, bool dry_run)
             convert_state.add_job(std::move(job_codegen), output_ts, is_dirty);
             // HACK: Ensure that the dependencies for this job all are for codegen
             for(auto& d : job_p->m_dependencies) {
-                if( d[d.size()-1] != ')' ) {
-                    d += " (codegen)";
-                }
+                make_dep_codegen(d);
             }
         }
     }
@@ -586,9 +600,7 @@ bool BuildList::build(BuildOptions opts, unsigned num_jobs, bool dry_run)
             convert_state.add_job(std::move(job_codegen), output_ts, is_dirty);
             // HACK: Ensure that the dependencies for this job all are for codegen
             for(auto& d : job->m_dependencies) {
-                if( d[d.size()-1] != ')' ) {
-                    d += " (codegen)";
-                }
+                make_dep_codegen(d);
             }
         }
         convert_state.add_job(std::move(job), output_ts, is_dirty);
