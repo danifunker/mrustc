@@ -1305,6 +1305,14 @@ void Parse_Impl_Item(TokenStream& lex, AST::Impl& impl)
             TU_ARMA(Function, e) {
                 impl.add_function(item.span, std::move(item.attrs), item.vis, false, item.name, std::move(e) );
                 }
+            // An associated `const` - the only kind of `Static` an impl block can hold,
+            // and stored the same way the non-interpolated path stores one.
+            // `bitflags` 2.13 reaches this through `__bitflags_item_safe_attrs`, which
+            // takes the flag constants as `$item:item` and re-emits them into the impl,
+            // so every `bitflags!` user trips it (`nix`'s `libc_bitflags!`, for one).
+            TU_ARMA(Static, e) {
+                impl.add_static(item.span, std::move(item.attrs), item.vis, false, item.name, std::move(e) );
+                }
             //TU_ARMA(Type, e) {
             //    impl.add_type(item.span, std::move(item.attrs), item.vis, false, item.name, std::move(e.m_params), std::move(e.m_type));
             //    }
