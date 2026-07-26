@@ -1758,6 +1758,10 @@ namespace {
             ::std::vector<unsigned> fields; fields.reserve(repr->fields.size());
             ::std::vector<bool>   zsts; zsts.reserve(repr->fields.size());
             size_t max_align = 0;
+            // `max_align` is the largest *natural* field alignment; `c_max_align` is what
+            // the C compiler will actually derive for the emitted struct. They differ on
+            // targets with an alignment-capping ABI (see the PowerPC note below).
+            size_t c_max_align = 0;
             bool has_manual_align = false;
             for(const auto& ent : repr->fields)
             {
@@ -1769,11 +1773,26 @@ namespace {
                     has_manual_align = true;
                 }
                 max_align = std::max(max_align, al);
+                // Model what the *C compiler* will derive for this struct, which is not
+                // always `max_align`. Under the PowerPC "power" alignment ABI (see
+                // src/trans/target.cpp) a member that is not first is capped to 4-byte
+                // alignment, so a struct whose only over-4-aligned members are interior
+                // comes out 4-aligned to gcc while mrustc computed 8. When those two
+                // disagree the alignment has to be forced explicitly, or both the
+                // sizeof and alignof assertions emitted below fail to compile -
+                // `libc`'s `tcp_connection_info` is the first such struct.
+                {
+                    size_t al_c = al;
+                    if( Target_GetCurSpec().m_arch.m_name == "powerpc" && sz > 0 && ent.offset != 0 && al_c > 4 ) {
+                        al_c = 4;
+                    }
+                    c_max_align = std::max(c_max_align, al_c);
+                }
 
                 fields.push_back(fields.size());
                 zsts.push_back(sz == 0);
             }
-            if(packing_max_align == 0 && max_align != repr->align /*&& repr->size > 0*/) {
+            if(packing_max_align == 0 && c_max_align != repr->align /*&& repr->size > 0*/) {
                 has_manual_align = true;
             }
             // - Sort the fields by offset
