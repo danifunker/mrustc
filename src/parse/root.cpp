@@ -1299,6 +1299,16 @@ void Parse_Impl_Item(TokenStream& lex, AST::Impl& impl)
         if( lex.lookahead(0) == TOK_INTERPOLATED_ITEM ) {
             tok = lex.getToken();
             auto item = tok.take_frag_item();
+            // Transfer new attributes onto the item, as `Parse_Mod_Item` does. They are
+            // parsed above, before the fragment is even seen, so without this they are
+            // silently dropped - which turns a `#[cfg]` that should remove the item into
+            // one that does nothing. `bitflags`' `__bitflags_item_safe_attrs` emits
+            // exactly this shape (collected attributes, then the item as a fragment), so
+            // `#[cfg(linux_android)] AT_NO_AUTOMOUNT` survived on macOS, where
+            // `libc::AT_NO_AUTOMOUNT` does not exist.
+            for(auto& a : item_attrs.m_items) {
+                item.attrs.m_items.push_back(std::move(a));
+            }
             TU_MATCH_HDRA((item.data), {)
             default:
                 TODO(lex.point_span(), "Interpolated item into impl: " << item.data.tag_str());
