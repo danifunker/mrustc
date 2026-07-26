@@ -2890,6 +2890,30 @@ namespace HIR {
                     auto ofs = local_state.read_param_uint(Target_GetPointerBits(), e.args.at(1));
                     dst.write_ptr(state, ptr_pair.first + ofs.truncate_u64() * element_size, ptr_pair.second);
                 }
+                // `arith_offset<T>(dst: *const T, offset: isize) -> *const T` - the wrapping
+                // form of `offset`, used by `<*const T>::wrapping_offset`. Identical arithmetic
+                // here (the const-evaluator does not model the pointer-provenance UB that is the
+                // only difference), but note the type parameter is the *pointee*, not a pointer.
+                else if( te->name == "arith_offset" ) {
+                    auto ty = local_state.monomorph_expand(te->params.m_types.at(0));
+                    size_t element_size;
+                    if( !Target_GetSizeOf(state.sp, resolve, ty, element_size) )
+                        throw Defer();
+                    auto ptr_pair = local_state.read_param_ptr(e.args.at(0));
+                    auto ofs = local_state.read_param_uint(Target_GetPointerBits(), e.args.at(1));
+                    dst.write_ptr(state, ptr_pair.first + ofs.truncate_u64() * element_size, ptr_pair.second);
+                }
+                // `ptr_guaranteed_cmp<T>(ptr: *const T, other: *const T) -> u8`
+                // 1 = definitely equal, 0 = definitely not equal, 2 = can't tell. Callers
+                // (`<*const T>::guaranteed_eq`) must tolerate 2, so only answer definitively
+                // when both pointers carry the *same* relocation and are therefore directly
+                // comparable; two different allocations report 2 rather than risk a wrong 0.
+                else if( te->name == "ptr_guaranteed_cmp" ) {
+                    auto a = local_state.read_param_ptr(e.args.at(0));
+                    auto b = local_state.read_param_ptr(e.args.at(1));
+                    uint8_t rv = (a.second == b.second) ? (a.first == b.first ? 1 : 0) : 2;
+                    dst.write_uint(state, 8, rv);
+                }
                 else if( te->name == "write_bytes" ) {
                     auto ty = local_state.monomorph_expand(te->params.m_types.at(0));
                     size_t element_size;

@@ -519,7 +519,23 @@ Token Lexer::getTokenInt()
                     else if(suffix == "f64") num_type = CORETYPE_F64;
                     else if(suffix == "f128") num_type = CORETYPE_F128;
                     else
-                        ERROR(this->point_span(), E0000, "Unknown integer suffix " << suffix);
+                    {
+                        // Not a numeric type suffix.
+                        //
+                        // rustc's lexer accepts an arbitrary identifier as a literal suffix and
+                        // only rejects it when the literal is *evaluated*, so a suffixed literal
+                        // that only ever appears inside a `macro_rules!` matcher/transcriber is
+                        // legal. `core_arch`'s PowerPC intrinsics rely on that: their
+                        // `impl_vec_trait!` arms are selected by bare `2b` / `3b` / `4b` tokens
+                        // (stdarch/crates/core_arch/src/powerpc/macros.rs), so erroring here made
+                        // libcore unbuildable for every `powerpc*` target.
+                        //
+                        // Emit the suffix as a following identifier token instead. The matcher and
+                        // the invocation both come through this same path, so they split
+                        // identically and macro matching is unaffected.
+                        m_next_tokens.push_back(Token(TOK_IDENT, Ident(this->realGetHygiene(), RcString::new_interned(suffix))));
+                        return Token(val, CORETYPE_ANY);
+                    }
                     return Token(val, num_type);
                 }
                 else {
