@@ -12,6 +12,7 @@
 #include <cassert>
 #include <algorithm>
 #include <cctype>   // toupper
+#include <set>
 #include "repository.h"
 #include "cfg.hpp"
 
@@ -287,7 +288,32 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path, const
 
     if( rv.m_enable_implicit_optional_dep_features )
     {
+        // Cargo creates the implicit `foo = ["dep:foo"]` feature for an optional
+        // dependency only when `[features]` does not mention `dep:foo` itself. That
+        // matters when a package has an optional dependency and an ordinary feature
+        // sharing a name: `rustix` has an optional `alloc` dependency (really
+        // `rustc-std-workspace-alloc`, used only by `rustc-dep-of-std`, which refers to
+        // it as `dep:alloc`) *and* a plain `alloc = []` feature. Adding the implicit
+        // entry merges the two, so enabling the ordinary feature tries to pull in the
+        // std-workspace shim crate and the build fails looking for `liballoc-1_99.rlib`.
+        ::std::set<::std::string>   explicit_dep_refs;
+        auto note_dep_refs = [&](const ::std::vector<::std::string>& list) {
+            for(const auto& v : list) {
+                if( v.compare(0, 4, "dep:") == 0 ) {
+                    explicit_dep_refs.insert( v.substr(4) );
+                }
+            }
+            };
+        for(const auto& feat : rv.m_features) {
+            note_dep_refs(feat.second);
+        }
+        note_dep_refs(rv.m_default_features);
+
         auto cb2 = [&](const PackageRef& dep) {
+            if( explicit_dep_refs.count(dep.key()) > 0 ) {
+                DEBUG("No implicit feature for optional dependency '" << dep.key() << "' - [features] uses `dep:` for it");
+                return;
+            }
             rv.m_features[dep.key()].push_back( "dep:" + dep.key() );
             };
         auto cb = [&](const Dependencies& deps) {
