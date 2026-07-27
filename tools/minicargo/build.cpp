@@ -47,13 +47,31 @@ bool deferred_codegen_enabled() {
 /// `crc32c`'s build script is the case - it links `semver` and `rustc_version`, both
 /// host crates, and ld fails on the missing `.rlib.o`. It presents as an intermittent
 /// race because it only fires when the scheduler reaches the dependent first.
+/// Note the second exclusion: a crate's dependency list also contains its own
+/// build-script *run* job (see `job->m_dependencies.push_back(bs_job_name)`), and
+/// a build script has no deferred codegen job - it is a host binary that is built
+/// and run directly. Appending the suffix there produces "<crate> (script run)
+/// (codegen)", which nothing will ever announce as complete, and the whole
+/// dependency tree behind that crate deadlocks:
+///
+///   BUG: Nothing runnable or running, but 91 job(s) are still waiting
+///   - 'quote v1.0.47 (host)'
+///      waiting on 'quote v1.0.47 (script run) (codegen)'
+///
+/// The original open-coded test ("not already ending in ')'") excluded these by
+/// accident, so this only became reachable once that test was corrected for
+/// "(host)" - and then only for a crate whose build script actually has a job this
+/// run, which is why most crates, with their script output already cached, were
+/// unaffected.
+static bool has_suffix(const ::std::string& s, const char* suffix) {
+    const size_t n = ::std::strlen(suffix);
+    return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
 void make_dep_codegen(::std::string& d) {
-    static const char SUFFIX[] = " (codegen)";
-    const size_t n = sizeof(SUFFIX) - 1;
-    if( d.size() >= n && d.compare(d.size() - n, n, SUFFIX) == 0 ) {
+    if( has_suffix(d, " (codegen)") || has_suffix(d, " (script run)") ) {
         return;
     }
-    d += SUFFIX;
+    d += " (codegen)";
 }
 
 struct RunState

@@ -172,7 +172,34 @@ bool JobList::run_all(size_t num_jobs, bool dry_run)
             if( this->running_jobs.empty()) {
                 // BUG if there are jobs on the queue
                 if( !this->waiting_jobs.empty() ) {
-                    ::std::cerr << "BUG: Nothing runnable or running, but jobs are still waiting\n";
+                    // This is a deadlock: every remaining job is blocked on a
+                    // dependency that will now never complete. Name them, and say
+                    // *which* dependency each is stuck on - without that this
+                    // reads as a mystery, and the usual cause is a job-name
+                    // mismatch (a dependency string that no job will ever
+                    // announce), which the listing makes obvious.
+                    ::std::cerr << "BUG: Nothing runnable or running, but " << this->waiting_jobs.size()
+                        << " job(s) are still waiting\n";
+                    for(const auto& slot : this->waiting_jobs)
+                    {
+                        if(!slot)
+                            continue;
+                        ::std::cerr << "- '" << slot->name() << "'";
+                        if( !slot->is_runnable() ) {
+                            ::std::cerr << " [not runnable]";
+                        }
+                        for(const auto& d : slot->dependencies())
+                        {
+                            if( this->completed_jobs.count(d) == 0 ) {
+                                ::std::cerr << "\n   waiting on '" << d << "'";
+                            }
+                        }
+                        ::std::cerr << "\n";
+                    }
+                    // ...and it must not be reported as a successful build. This
+                    // returned `!failed` == true, so the driver script saw a
+                    // zero exit and announced a binary that was never linked.
+                    failed = true;
                 }
                 break ;
             }
