@@ -3657,6 +3657,17 @@ namespace {
                 void visit_path(::HIR::Visitor::PathContext pc, ::HIR::Path& p) override {
                     m_exp.visit_path(p, pc);
                 }
+                void visit_generic_path(::HIR::Visitor::PathContext pc, ::HIR::GenericPath& p) override {
+                    // As above, and needed for the same reason. The default
+                    // `ExprVisitorDef::visit_generic_path` goes straight to
+                    // `visit_path_params`, which relies on `m_get_params` having
+                    // been set by whichever path visitor encloses it. Without this
+                    // override, a generic path written in an *expression* reached
+                    // `Expander::visit_path_params` with that function still empty,
+                    // and evaluating a const-generic argument there threw
+                    // `std::bad_function_call` - an abort carrying no diagnostic.
+                    m_exp.visit_generic_path(p, pc);
+                }
 
                 void visit(::HIR::ExprNode_CallMethod& node) override {
                     auto saved = m_exp.m_get_params;
