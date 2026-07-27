@@ -115,6 +115,19 @@ struct RunState
     ::std::string get_build_script_exe(const PackageManifest& manifest) const {
         return get_output_dir(true) / get_build_script_out(manifest) + "_run" EXESUF;
     }
+    /// Get `OUT_DIR`: where a package's build script writes its generated sources.
+    ///
+    /// A build script is native code, so it is built and run as a *host* binary,
+    /// once per package - hence `get_output_dir(true)`, matching
+    /// `get_build_script_exe` above and `Job_RunScript::get_outfile`. The crate
+    /// compile that consumes those generated sources has to look in the same
+    /// place, and it is a separate job with its own notion of host-ness, so both
+    /// sides go through this one accessor instead of deriving the path twice.
+    /// When not cross compiling `get_output_dir` ignores its argument, which is
+    /// why a mismatch here was only ever visible on a cross build.
+    ::helpers::path get_build_script_out_dir(const PackageManifest& manifest) const {
+        return get_output_dir(true) / get_build_script_out(manifest);
+    }
     /// Get the output file for a crate (e.g. libfoo.rlib, or foo.exe)
     ::helpers::path get_crate_path(const PackageManifest& manifest, const PackageTarget& target, bool is_for_host, const char** crate_type, ::std::string* out_crate_suffix) const;
     
@@ -1097,7 +1110,12 @@ RunnableJob Job_BuildTarget::start()
 
     // Environment variables (rustc_env)
     StringListKV    env;
-    auto out_dir = parent.get_output_dir(m_is_for_host).to_absolute() / parent.get_build_script_out(m_manifest);
+    // NOTE: keyed on the build script's host-ness, not this crate's - see
+    // `get_build_script_out_dir`. Using `m_is_for_host` here pointed a
+    // cross-compiled crate at a directory the script had never written to, so
+    // e.g. `crc32c` failed on its generated `sw.table` with a bare
+    // "Unable to open file".
+    auto out_dir = parent.get_build_script_out_dir(m_manifest).to_absolute();
     env.push_back("OUT_DIR", out_dir.str());
     for(const auto& e : m_manifest.build_script_output().rustc_env) {
         env.push_back(e.first.c_str(), e.second.c_str());
@@ -1213,7 +1231,7 @@ helpers::path Job_RunScript::get_script_exe() const
 }
 RunnableJob Job_RunScript::start()
 {
-    auto out_dir = parent.get_output_dir(true) / parent.get_build_script_out(m_manifest);
+    auto out_dir = parent.get_build_script_out_dir(m_manifest);
     auto out_file = get_outfile();
     auto script_exe = get_script_exe();
 
