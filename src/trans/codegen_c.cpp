@@ -1801,6 +1801,32 @@ namespace {
             if(packing_max_align == 0 && c_max_align != repr->align /*&& repr->size > 0*/) {
                 has_manual_align = true;
             }
+            // A type whose alignment is 1 has to be emitted *packed*, even when it
+            // is not `repr(packed)` itself.
+            //
+            // `c_max_align` above is built from each member's own alignment, and a
+            // member that is a packed struct reports 1 - so this looks like a case
+            // where C agrees. It does not: gcc derives a containing type's
+            // alignment from the member's *natural* alignment, ignoring the
+            // `#pragma pack` in force where that member was defined. Measured on
+            // the G5 (`#pragma pack(1) struct p4 { uint32_t; uint16_t; }`, 6/1):
+            //
+            //     struct { p4 v; }                    -> 8/4   <-- not 6/1
+            //     struct { p4 v; } inside pack(1)     -> 6/1
+            //
+            // `aligned(N)` cannot fix it - gcc's "aligned can only increase" rule
+            // means the attribute never lowers alignment - so `has_manual_align` is
+            // no help here and the type has to be emitted inside a pack region.
+            // zip's `#[repr(packed, C)]` block headers reach this through
+            // `ManuallyDrop`/`MaybeUninit`, which are transparent wrappers and so
+            // inherit align 1 while gcc gave them 4 and padded the size.
+            //
+            // Restricted to align 1: for such a type Rust guarantees every field is
+            // 1-aligned and the layout is tight, so `pack(1)` cannot move a field -
+            // it is exactly a no-op wherever gcc would already have agreed.
+            if(packing_max_align == 0 && !has_manual_align && repr->align == 1 && repr->size > 1) {
+                packing_max_align = 1;
+            }
             // - Sort the fields by offset
             ::std::sort(fields.begin(), fields.end(), [&](auto a, auto b){
                 if( repr->fields[a].offset == repr->fields[b].offset )
