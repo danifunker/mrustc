@@ -25,6 +25,13 @@ public:
         else if( name == "cdylib" ) {
             crate.m_crate_type = AST::Crate::Type::CDylib;
         }
+        // `Type::ProcMacro` already existed - it was just never reachable from
+        // the attribute, only from `--crate-type`. A proc-macro crate is normally
+        // built with that flag (minicargo passes it), so the inner attribute is
+        // redundant, but it is legal and `zeroize_derive` writes it.
+        else if( name == "proc-macro" ) {
+            crate.m_crate_type = AST::Crate::Type::ProcMacro;
+        }
         else {
             ERROR(sp, E0000, "Unknown crate type '" << name << "'");
         }
