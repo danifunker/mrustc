@@ -1489,11 +1489,7 @@ namespace typecheck
                 this->context.add_ivars( val->m_res_type );
             }
 
-            // Populate the call cache. If the path is still ambiguous (e.g. an
-            // unresolved const-generic parameter on the callee), it can't be
-            // resolved yet - defer the argument/return equates to a revisit
-            // (see ExprVisitor_Revisit::visit(_CallPath)) instead of aborting,
-            // and just type-check the argument subtrees for now.
+            // Populate the call cache; if the path is still ambiguous (e.g. an unresolved const-generic on the callee), defer the equates to a revisit rather than aborting.
             const bool cache_ok = visit_call_populate_cache(this->context, node.span(), node.m_path, node.m_cache);
             if( cache_ok )
             {

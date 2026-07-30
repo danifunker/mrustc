@@ -756,14 +756,8 @@ struct CloneTyWith_Monomorph: Monomorphiser {
 
     switch(lft_ref.group())
     {
-    // NOTE (the three range checks below): a lifetime whose index the recorded
-    // param list does not cover is passed through rather than aborting the
-    // compile. `Monomorphiser::monomorph_lifetime` already does exactly this for
-    // HRTBs, where the equivalent assert is commented out with a TODO noting the
-    // params are not reliably in range once binders nest; the same holds for a
-    // trait's own lifetime parameters used from a default method body. Lifetimes
-    // are erased before codegen, so an unresolved one is inert - which is why
-    // `get_type` and `get_value` above still assert, and only these do not.
+    // A lifetime whose index the recorded param list does not cover is passed through rather than aborting, as `monomorph_lifetime` already does for HRTBs.
+    // Lifetimes are erased before codegen, so an unresolved one is inert - which is why `get_type`/`get_value` still assert and these do not.
     case 0:
         if( const auto* p = this->get_impl_params() ) {
             if( lft_ref.idx() >= p->m_lifetimes.size() ) {

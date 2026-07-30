@@ -1446,9 +1446,7 @@ namespace {
                 this->visit_type(fcn.rettype());
             //}
             this->visit_bounds(fcn.params());
-            // A trait method *declaration* has no body - send `;` rather than
-            // dereferencing an absent node. Every caller before `visit_trait`
-            // below passed a function that had one.
+            // A trait method declaration has no body - send `;` rather than dereferencing an absent node.
             if( fcn.code().is_valid() ) {
                 this->visit_nodes(fcn.code());
             }
@@ -1523,12 +1521,6 @@ namespace {
         }
 
         /// Send a trait definition to the proc macro.
-        ///
-        /// `visit_item` had no case for this at all, so an attribute macro applied
-        /// to a `trait` aborted with "TODO: visit_item - Trait" - and because that
-        /// kills the compiler mid-conversation, the plugin then reported its own
-        /// "Unexpected EOF", making it look like two failures. ratatui puts
-        /// `#[instability::unstable(..)]` on `WidgetRef` and `StatefulWidgetRef`.
         void visit_trait(const RcString& name, const AST::Visibility& vis, const ::AST::Trait& trait)
         {
             this->visit_vis(vis);
@@ -1557,10 +1549,7 @@ namespace {
             this->visit_bounds(trait.params());
 
             m_pmi.send_symbol("{");
-            // Trait items carry no visibility of their own in Rust - they inherit
-            // the trait's. mrustc records them as `pub`, and emitting that gives
-            // `trait X { pub fn .. }`, which the plugin's parser rejects
-            // ("Unexpected token TOK_RWORD_PUB"). Send them unqualified.
+            // Trait items inherit the trait's visibility; mrustc records them as `pub`, which the plugin's parser rejects. Send them unqualified.
             const auto item_vis = ::AST::Visibility::make_bare_private();
             for(const auto& i : trait.items())
             {
@@ -1575,11 +1564,7 @@ namespace {
                 TU_ARMA(Static, e) {
                     this->visit_static(i.name, item_vis, e);
                     }
-                // An associated type. Its bounds live in `m_self_bounds` encoded as
-                // `Self: ...`, which is not the shape they have to be written in
-                // here - rather than re-derive that and risk dropping one silently,
-                // only the un-bounded form is emitted and anything else is a loud
-                // TODO. `type State;` (ratatui's StatefulWidgetRef) is the case.
+                // An associated type. Bounds live in `m_self_bounds` encoded as `Self: ...`, not the shape needed here, so only the un-bounded form is emitted.
                 TU_ARMA(Type, e) {
                     if( !e.m_self_bounds.m_bounds.empty() ) {
                         TODO(i.span, "visit_trait - associated type with bounds - " << i.name);

@@ -761,18 +761,7 @@ AST::Named<AST::Item> Parse_Trait_Item(TokenStream& lex)
         }
     }
 
-    // An item arriving as an already-parsed `$item:item` fragment - the shape
-    // `Parse_Impl_Item` handles. A trait body can hold one too, and there was no
-    // case for it here at all ("Unexpected token TOK_INTERPOLATED_ITEM"). Unlike
-    // the impl version there is nothing to dispatch on: a trait item *is* an
-    // `AST::Named<AST::Item>`, so it only has to be handed straight back.
-    //
-    // `crossterm`'s `stylize_method!` is the case - it emits each method through
-    // `calculated_docs!`, whose expansion is `$(#[doc = $doc] $item)*`, i.e. an
-    // attribute in front of an interpolated function, directly into
-    // `trait Stylize`. The attributes are transferred onto the item exactly as
-    // `Parse_Mod_Item` and `Parse_Impl_Item` do: they are parsed above, before the
-    // fragment is even seen, so otherwise they would be dropped silently.
+    // An already-parsed `$item:item` fragment. A trait item *is* an `AST::Named<AST::Item>`, so it is handed straight back.
     if( lex.lookahead(0) == TOK_INTERPOLATED_ITEM )
     {
         tok = lex.getToken();
@@ -780,8 +769,7 @@ AST::Named<AST::Item> Parse_Trait_Item(TokenStream& lex)
         for(auto& a : item_attrs.m_items) {
             item.attrs.m_items.push_back(std::move(a));
         }
-        // Only the kinds a trait body can actually hold; anything else should be
-        // a loud TODO rather than silently accepted.
+        // Only the kinds a trait body can hold; anything else is a loud TODO rather than silently accepted.
         TU_MATCH_HDRA((item.data), {)
         default:
             TODO(lex.point_span(), "Interpolated item into trait: " << item.data.tag_str());
@@ -1330,13 +1318,7 @@ void Parse_Impl_Item(TokenStream& lex, AST::Impl& impl)
         if( lex.lookahead(0) == TOK_INTERPOLATED_ITEM ) {
             tok = lex.getToken();
             auto item = tok.take_frag_item();
-            // Transfer new attributes onto the item, as `Parse_Mod_Item` does. They are
-            // parsed above, before the fragment is even seen, so without this they are
-            // silently dropped - which turns a `#[cfg]` that should remove the item into
-            // one that does nothing. `bitflags`' `__bitflags_item_safe_attrs` emits
-            // exactly this shape (collected attributes, then the item as a fragment), so
-            // `#[cfg(linux_android)] AT_NO_AUTOMOUNT` survived on macOS, where
-            // `libc::AT_NO_AUTOMOUNT` does not exist.
+            // Attributes are parsed before the fragment is seen, so without this transfer they are dropped - turning a `#[cfg]` that should remove the item into a no-op.
             for(auto& a : item_attrs.m_items) {
                 item.attrs.m_items.push_back(std::move(a));
             }
@@ -1346,11 +1328,7 @@ void Parse_Impl_Item(TokenStream& lex, AST::Impl& impl)
             TU_ARMA(Function, e) {
                 impl.add_function(item.span, std::move(item.attrs), item.vis, false, item.name, std::move(e) );
                 }
-            // An associated `const` - the only kind of `Static` an impl block can hold,
-            // and stored the same way the non-interpolated path stores one.
-            // `bitflags` 2.13 reaches this through `__bitflags_item_safe_attrs`, which
-            // takes the flag constants as `$item:item` and re-emits them into the impl,
-            // so every `bitflags!` user trips it (`nix`'s `libc_bitflags!`, for one).
+            // An associated `const` - the only kind of `Static` an impl block can hold, stored as the non-interpolated path stores one.
             TU_ARMA(Static, e) {
                 impl.add_static(item.span, std::move(item.attrs), item.vis, false, item.name, std::move(e) );
                 }

@@ -2890,10 +2890,7 @@ namespace HIR {
                     auto ofs = local_state.read_param_uint(Target_GetPointerBits(), e.args.at(1));
                     dst.write_ptr(state, ptr_pair.first + ofs.truncate_u64() * element_size, ptr_pair.second);
                 }
-                // `arith_offset<T>(dst: *const T, offset: isize) -> *const T` - the wrapping
-                // form of `offset`, used by `<*const T>::wrapping_offset`. Identical arithmetic
-                // here (the const-evaluator does not model the pointer-provenance UB that is the
-                // only difference), but note the type parameter is the *pointee*, not a pointer.
+                // `arith_offset` is the wrapping form of `offset`; identical arithmetic here, and the type parameter is the *pointee*.
                 else if( te->name == "arith_offset" ) {
                     auto ty = local_state.monomorph_expand(te->params.m_types.at(0));
                     size_t element_size;
@@ -2903,11 +2900,7 @@ namespace HIR {
                     auto ofs = local_state.read_param_uint(Target_GetPointerBits(), e.args.at(1));
                     dst.write_ptr(state, ptr_pair.first + ofs.truncate_u64() * element_size, ptr_pair.second);
                 }
-                // `ptr_guaranteed_cmp<T>(ptr: *const T, other: *const T) -> u8`
-                // 1 = definitely equal, 0 = definitely not equal, 2 = can't tell. Callers
-                // (`<*const T>::guaranteed_eq`) must tolerate 2, so only answer definitively
-                // when both pointers carry the *same* relocation and are therefore directly
-                // comparable; two different allocations report 2 rather than risk a wrong 0.
+                // Returns 1/0/2 (equal / not equal / unknown). Only answer definitively for pointers sharing a relocation; different allocations report 2.
                 else if( te->name == "ptr_guaranteed_cmp" ) {
                     auto a = local_state.read_param_ptr(e.args.at(0));
                     auto b = local_state.read_param_ptr(e.args.at(1));
@@ -3658,14 +3651,7 @@ namespace {
                     m_exp.visit_path(p, pc);
                 }
                 void visit_generic_path(::HIR::Visitor::PathContext pc, ::HIR::GenericPath& p) override {
-                    // As above, and needed for the same reason. The default
-                    // `ExprVisitorDef::visit_generic_path` goes straight to
-                    // `visit_path_params`, which relies on `m_get_params` having
-                    // been set by whichever path visitor encloses it. Without this
-                    // override, a generic path written in an *expression* reached
-                    // `Expander::visit_path_params` with that function still empty,
-                    // and evaluating a const-generic argument there threw
-                    // `std::bad_function_call` - an abort carrying no diagnostic.
+                    // `visit_path_params` relies on `m_get_params` being set by the enclosing path visitor; without this override a generic path in an expression reaches it empty.
                     m_exp.visit_generic_path(p, pc);
                 }
 

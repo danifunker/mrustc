@@ -288,14 +288,8 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path, const
 
     if( rv.m_enable_implicit_optional_dep_features )
     {
-        // Cargo creates the implicit `foo = ["dep:foo"]` feature for an optional
-        // dependency only when `[features]` does not mention `dep:foo` itself. That
-        // matters when a package has an optional dependency and an ordinary feature
-        // sharing a name: `rustix` has an optional `alloc` dependency (really
-        // `rustc-std-workspace-alloc`, used only by `rustc-dep-of-std`, which refers to
-        // it as `dep:alloc`) *and* a plain `alloc = []` feature. Adding the implicit
-        // entry merges the two, so enabling the ordinary feature tries to pull in the
-        // std-workspace shim crate and the build fails looking for `liballoc-1_99.rlib`.
+        // Cargo adds the implicit `foo = ["dep:foo"]` feature only when `[features]` does not mention `dep:foo` itself.
+        // Otherwise an optional dependency and a same-named ordinary feature merge, and enabling the feature drags in the dependency.
         ::std::set<::std::string>   explicit_dep_refs;
         auto note_dep_refs = [&](const ::std::vector<::std::string>& list) {
             for(const auto& v : list) {
@@ -881,8 +875,7 @@ namespace
             for(const auto& sv : kv.value.m_sub_values)
             {
                 const auto& s = sv.as_string();
-                // "lib" is cargo's alias for the default library type; treat it
-                // as rlib (mrustc only produces rlibs for library crates).
+                // "lib" is cargo's alias for the default library type; mrustc only produces rlibs.
                 if(s == "rlib" || s == "lib") {
                     target.m_crate_types.push_back(PackageTarget::CrateType::rlib);
                 }

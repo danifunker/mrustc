@@ -83,15 +83,8 @@ struct TypeRepr
 {
     size_t  align = 0;
     size_t  size = 0;
-    /// True when `align` was asked for explicitly (`repr(align(N))`) somewhere inside this
-    /// type, rather than falling out of its members' natural alignment.
-    ///
-    /// This is gcc's `TYPE_USER_ALIGN`, and it only matters on a target whose C ABI caps
-    /// member alignment - Darwin/PowerPC's "power" rule being the one mrustc models. gcc
-    /// applies that cap in `stor-layout.c:place_field` guarded by
-    /// `if (! DECL_USER_ALIGN (field))`, so an explicitly-aligned type keeps its alignment
-    /// wherever it appears, and the flag propagates outward (array from element,
-    /// struct/union/enum from any member) exactly as it does in gcc.
+    /// gcc's `TYPE_USER_ALIGN`: `align` was asked for explicitly (`repr(align(N))`) somewhere inside this type, rather than being natural.
+    /// Propagates outward (array from element, aggregate from any member) and exempts the type from a member-alignment cap, as in gcc.
     bool    user_align = false;
 
     struct FieldPath {
@@ -190,9 +183,7 @@ extern bool Target_GetSizeAndAlignOf(const Span& sp, const StaticTraitResolve& r
 /// Does this target's C ABI cap the alignment of a struct member that is not the first?
 /// True for Darwin/PowerPC's "power" alignment rule; see `TypeRepr::user_align`.
 extern bool Target_CapsMemberAlignment();
-/// gcc's `TYPE_USER_ALIGN`: is this type's alignment explicitly requested (`repr(align(N))`
-/// somewhere inside it) rather than natural? Such a type is exempt from the member-alignment
-/// cap above, wherever it appears. See `TypeRepr::user_align`.
+/// gcc's `TYPE_USER_ALIGN`: such a type is exempt from the member-alignment cap above, wherever it appears.
 extern bool Target_TypeHasUserAlignment(const Span& sp, const StaticTraitResolve& resolve, const ::HIR::TypeRef& ty);
 
 /// This function is for the MIR Optimisation tool, which has to be able to read and use existing layouts

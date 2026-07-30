@@ -1758,9 +1758,7 @@ namespace {
             ::std::vector<unsigned> fields; fields.reserve(repr->fields.size());
             ::std::vector<bool>   zsts; zsts.reserve(repr->fields.size());
             size_t max_align = 0;
-            // `max_align` is the largest *natural* field alignment; `c_max_align` is what
-            // the C compiler will actually derive for the emitted struct. They differ on
-            // targets with an alignment-capping ABI (see the PowerPC note below).
+            // `max_align` is the largest natural field alignment; `c_max_align` is what the C compiler will derive for the emitted struct.
             size_t c_max_align = 0;
             bool has_manual_align = false;
             for(const auto& ent : repr->fields)
@@ -1773,19 +1771,8 @@ namespace {
                     has_manual_align = true;
                 }
                 max_align = std::max(max_align, al);
-                // Model what the *C compiler* will derive for this struct, which is not
-                // always `max_align`. Under the PowerPC "power" alignment ABI (see
-                // src/trans/target.cpp) a member that is not first is capped to 4-byte
-                // alignment, so a struct whose only over-4-aligned members are interior
-                // comes out 4-aligned to gcc while mrustc computed 8. When those two
-                // disagree the alignment has to be forced explicitly, or both the
-                // sizeof and alignof assertions emitted below fail to compile -
-                // `libc`'s `tcp_connection_info` is the first such struct.
-                //
-                // The cap does not apply to a member whose alignment was requested
-                // explicitly (`repr(align(N))` at any depth) - gcc exempts those, so the
-                // C compiler keeps the higher alignment and mrustc must too. This has to
-                // agree with the identical test in `make_type_repr_struct__inner`.
+                // Under an alignment-capping ABI a struct whose only over-aligned members are interior comes out lower to C than mrustc computed.
+                // Force the alignment when the two disagree, or the sizeof/alignof asserts emitted below fail to compile.
                 {
                     size_t al_c = al;
                     if( Target_CapsMemberAlignment() && sz > 0 && ent.offset != 0 && al_c > 4
@@ -1801,29 +1788,9 @@ namespace {
             if(packing_max_align == 0 && c_max_align != repr->align /*&& repr->size > 0*/) {
                 has_manual_align = true;
             }
-            // A type whose alignment is 1 has to be emitted *packed*, even when it
-            // is not `repr(packed)` itself.
-            //
-            // `c_max_align` above is built from each member's own alignment, and a
-            // member that is a packed struct reports 1 - so this looks like a case
-            // where C agrees. It does not: gcc derives a containing type's
-            // alignment from the member's *natural* alignment, ignoring the
-            // `#pragma pack` in force where that member was defined. Measured on
-            // the G5 (`#pragma pack(1) struct p4 { uint32_t; uint16_t; }`, 6/1):
-            //
-            //     struct { p4 v; }                    -> 8/4   <-- not 6/1
-            //     struct { p4 v; } inside pack(1)     -> 6/1
-            //
-            // `aligned(N)` cannot fix it - gcc's "aligned can only increase" rule
-            // means the attribute never lowers alignment - so `has_manual_align` is
-            // no help here and the type has to be emitted inside a pack region.
-            // zip's `#[repr(packed, C)]` block headers reach this through
-            // `ManuallyDrop`/`MaybeUninit`, which are transparent wrappers and so
-            // inherit align 1 while gcc gave them 4 and padded the size.
-            //
-            // Restricted to align 1: for such a type Rust guarantees every field is
-            // 1-aligned and the layout is tight, so `pack(1)` cannot move a field -
-            // it is exactly a no-op wherever gcc would already have agreed.
+            // An align-1 type must be emitted packed even when not `repr(packed)`: gcc derives a container's alignment from the member's *natural*
+            // alignment, ignoring the `#pragma pack` in force where the member was defined, and `aligned(N)` cannot lower alignment to correct it.
+            // Safe because Rust guarantees an align-1 type is tight, so `pack(1)` cannot move a field.
             if(packing_max_align == 0 && !has_manual_align && repr->align == 1 && repr->size > 1) {
                 packing_max_align = 1;
             }
@@ -2130,13 +2097,8 @@ namespace {
                 m_of << "\t"; emit_ctype( repr->fields[i].ty, FMT_CB(ss, ss << "var_" << i;) ); m_of << ";\n";
             }
             m_of << "}";
-            // Pin the alignment rather than let the C compiler derive it. Under the
-            // PowerPC "power" alignment ABI a union takes the alignment of its *first*
-            // member, and the variants are emitted in declaration order - so
-            // `MaybeUninit<u128>`, whose first variant is the unit type, comes out
-            // 1-aligned to gcc while mrustc computed 8, and every enclosing type then
-            // fails its `alignof_assert`. Union members all sit at offset 0, so pinning
-            // the alignment moves nothing else.
+            // Pin union alignment: under the power ABI a union takes its *first* member's alignment, so `MaybeUninit<u128>` comes out 1-aligned to gcc.
+            // Union members all sit at offset 0, so pinning moves nothing else.
             if( m_compiler == Compiler::Gcc && repr->align > 0 )
             {
                 m_of << " __attribute__((__aligned__(" << repr->align << ")))";

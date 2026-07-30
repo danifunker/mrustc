@@ -164,13 +164,7 @@ struct MonomorphHrlsOnly:
     }
     ::HIR::LifetimeRef get_lifetime(const Span& sp, const ::HIR::GenericRef& lft_ref) const override {
         if( lft_ref.group() == 3 ) {
-            // If the HRL batch doesn't cover this index, pass the lifetime through
-            // rather than aborting - same treatment (and the same reason) as the
-            // disabled range check in `Monomorphiser::monomorph_lifetime`, whose
-            // TODO notes these are not reliably in range for nested binders.
-            // Lifetimes are erased before codegen, so an unresolved one is inert;
-            // `get_type`/`get_value` above still assert, because an unresolved type
-            // or const is not.
+            // If the HRL batch does not cover this index, pass the lifetime through rather than abort: not reliably in range for nested binders, and erased before codegen.
             if( lft_ref.idx() >= pp_hrb->m_lifetimes.size() ) {
                 DEBUG("HRL " << lft_ref << " out of bounds (" << pp_hrb->m_lifetimes.size() << ") - passthrough");
                 return ::HIR::LifetimeRef(lft_ref.binding);

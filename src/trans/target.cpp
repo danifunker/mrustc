@@ -69,12 +69,7 @@ const TargetArch ARCH_POWERPC64LE = {
 const TargetArch ARCH_POWERPC = {
     "powerpc",
     32, true,
-    // 32-bit PowerPC has no lock-free 8-byte atomic instruction, but the C11
-    // atomics this backend emits do not require one: `_Atomic uint64_t` lowers
-    // to `__atomic_*_8` calls that libatomic implements with a lock, and every
-    // powerpc target here already links it (`-l atomic`). Reporting u64 as
-    // unavailable instead cfg's `AtomicU64` out of libcore, which libstd's
-    // `sys::unix::time` uses unconditionally on macOS - so libstd cannot build.
+    // 8-byte atomics are lock-based via libatomic here, but still available: cfg'ing out AtomicU64 breaks libstd.
     { /*atomic(u8)=*/true, true, true, true,  true },
     TargetArch::Alignments(2, 4, 8, 8, 4, 8, 4)
 };
@@ -610,10 +605,7 @@ namespace
                 ARCH_X86_64
                 };
         }
-        // NOTE: Every `*-apple-darwin` target has an empty `target_env`, as in rustc.
-        // Declaring "gnu" made `#[cfg(target_env = "gnu")]` select glibc-specific code on
-        // a platform that has no glibc - `nix` picks its Linux `SigevThreadId` match arm
-        // that way and then fails on `libc::SIGEV_THREAD_ID`.
+        // `*-apple-darwin` has an empty target_env (as in rustc); "gnu" selects glibc-only code on a platform with no glibc.
         else if(target_name == "i686-apple-darwin")
         {
             // NOTE: OSX uses Mach-O binaries, which don't fully support the defaults used for GNU targets
@@ -992,7 +984,6 @@ namespace {
         size_t  align;
         HIR::TypeRef    ty;
         /// `align` came from an explicit `repr(align(N))` somewhere inside `ty`.
-        /// See `TypeRepr::user_align` and `target_caps_member_alignment`.
         bool    user_align = false;
     };
     ::std::ostream& operator<<(std::ostream& os, const Ent& e) {
@@ -1000,30 +991,13 @@ namespace {
         return os;
     }
 
-    /// Does this target's C ABI cap the alignment of a struct member that is not the first?
-    ///
-    /// Darwin/PowerPC's "power" alignment ABI does: the first member keeps its natural
-    /// alignment and later members are capped to 4. mrustc has to model this because it
-    /// emits plain C structs and lets the C compiler lay them out - if the two disagree,
-    /// the `sizeof_assert` / `alignof_assert` typedefs emitted alongside each struct fail
-    /// to compile. 32-bit PowerPC is the only arch here where it bites, being the only
-    /// target with 32-bit pointers but 8-byte-aligned `u64` (i586 aligns `u64` to 4, so
-    /// the rule would be a no-op there).
+    /// Darwin/PowerPC "power" alignment: the first member keeps its natural alignment, later members are capped to 4.
     bool target_caps_member_alignment()
     {
         return Target_GetCurSpec().m_arch.m_name == "powerpc";
     }
 
-    /// Does this type's alignment come from an explicit `repr(align(N))` rather than from
-    /// the natural alignment of its members?
-    ///
-    /// gcc tracks the same thing as `TYPE_USER_ALIGN`, and it decides whether the
-    /// member-alignment cap above applies: `stor-layout.c:place_field` runs
-    /// `ADJUST_FIELD_ALIGN` (where the Darwin/PowerPC rule lives) only
-    /// `if (! DECL_USER_ALIGN (field))`. So a `repr(align(8))` type stays 8-aligned however
-    /// deeply it is nested, and every aggregate containing it inherits that exemption.
-    /// Verified against gcc 10.5 on PowerPC via `scripts/ppc-layout-probe.py` in the
-    /// rusty-backup tree.
+    /// gcc's TYPE_USER_ALIGN: `place_field` applies ADJUST_FIELD_ALIGN only `if (! DECL_USER_ALIGN (field))`, so explicit alignment is exempt from the cap.
     bool type_has_user_alignment(const Span& sp, const StaticTraitResolve& resolve, const ::HIR::TypeRef& ty)
     {
         // Arrays and slices inherit it from the element type, as in gcc's `layout_type`.
@@ -1033,8 +1007,7 @@ namespace {
         if( const auto* te = ty.data().opt_Slice() ) {
             return type_has_user_alignment(sp, resolve, te->inner);
         }
-        // Aggregates cache it on their repr; everything else (primitives, pointers,
-        // function pointers, ...) is naturally aligned by definition.
+        // Aggregates cache it on their repr; everything else is naturally aligned by definition.
         if( ty.data().is_Tuple() || (ty.data().is_Path() && (
                 ty.data().as_Path().binding.is_Struct()
                 || ty.data().as_Path().binding.is_Union()
@@ -1047,7 +1020,6 @@ namespace {
         return false;
     }
 
-    /// Build an `Ent` for a field of type `ty`, filling in the user-alignment flag.
     bool make_field_ent(const Span& sp, const StaticTraitResolve& resolve, unsigned idx, ::HIR::TypeRef ty, Ent& out)
     {
         size_t  size, align;
@@ -1149,31 +1121,9 @@ namespace {
         {
             auto align = e.align;
 
-            // PowerPC 32-bit ABI ("power" alignment, as used by Darwin/AIX)
-            // First element uses natural alignment, subsequent elements with natural alignment
-            // >= 4 and up to 8 use embedding = 4. Skip ZST.
-            //
-            // This has to apply to Rust's own types too, not just `repr(C)`: mrustc emits
-            // every struct as a plain C struct and lets the C compiler lay it out, so
-            // mrustc's model must match gcc's or the emitted sizeof/alignof asserts fail.
-            //
-            // The cost is that a Rust type can end up with a field at an offset that does
-            // not satisfy `align_of::<FieldTy>()` - `std::thread::Inner` puts its
-            // `ThreadId` (a `NonZeroU64`, align 8) at offset 84. The generated C is still
-            // correct (gcc knows the member is 4-aligned and emits accesses to match), but
-            // `ptr::write`'s `assert_unsafe_precondition!` disagrees, which aborts every
-            // program during `rt::init`. Hence the PPC stdlib is built without
-            // `debug_assertions`. See docs/build-ppc-mrustc.md.
-            //
-            // The cap applies to *natural* alignment only. A field whose alignment was
-            // asked for explicitly (`repr(align(N))`, at any nesting depth) keeps it -
-            // gcc guards its equivalent with `if (! DECL_USER_ALIGN (field))`, so an
-            // explicitly-aligned member raises the enclosing struct's alignment even when
-            // it is not first. `lzfse_rust`'s `FseCore` is the case that found this: it
-            // embeds a `repr(align(8))` `VEntry` array 808 bytes in, and gcc gives the
-            // whole struct align 8 where mrustc used to say 4.
-            //
-            // See `target_caps_member_alignment` for why any of this is modelled here.
+            // PowerPC "power" alignment (Darwin/AIX): first member natural, later members with natural align 4..8 capped to 4, ZSTs skipped.
+            // Applies to Rust types too, not just repr(C): mrustc emits plain C structs, so this model must match the C compiler's.
+            // The cap is on natural alignment only - an explicitly aligned member keeps it and raises the enclosing struct's align.
             if(target_caps_member_alignment())
             {
                 if ( e.size > 0 )
@@ -1942,8 +1892,7 @@ namespace {
                             // Generate raw struct reprs for all variants
                             // - Add `non_niche_offset` to all variants
                             assert(reprs.size() == variants.size());
-                            // The size/alignment of the union of the *final* variant layouts,
-                            // which is what codegen emits. See the note where these are used.
+                            // Size/alignment of the union of the *final* variant layouts, which is what codegen emits.
                             size_t final_size = 0;
                             size_t final_align = 1;
                             for(size_t i = 0; i < reprs.size(); i ++)
@@ -2031,19 +1980,8 @@ namespace {
                             rv.size = max_size;
                             rv.align = max_align;
 
-                            // `max_align` came from per-variant layouts built *before* the tag
-                            // field was added, so a payload that is not first in the final
-                            // layout was laid out as though it were. On a target whose C ABI
-                            // caps the alignment of a non-leading member (see
-                            // `target_caps_member_alignment`) that over-states the variant's
-                            // alignment, and the enum's with it: on PowerPC
-                            // `Result<u64, Error>` came out 16/8 while the emitted C - a union
-                            // of the final variant structs, both 12/4 - is 12/4, and the
-                            // `sizeof_assert` mrustc writes alongside it failed to compile.
-                            //
-                            // Take the answer from those final layouts, since they are exactly
-                            // what codegen emits. Guarded on the capping ABI: elsewhere the two
-                            // agree by construction, and this must not perturb any other target.
+                            // `max_align` predates the tag field, so a non-leading payload was sized as though it led; under a member-alignment cap that over-states the enum.
+                            // Take size/align from the final variant layouts instead, which are what codegen emits. Guarded on the capping ABI so no other target moves.
                             if( target_caps_member_alignment() && final_size > 0 )
                             {
                                 size_t sz = final_size;
@@ -2258,10 +2196,7 @@ namespace {
             }
         }
 
-        // An enum inherits user-alignment from any variant, as in gcc. Every branch above
-        // has already forced each variant type's repr to be computed (via
-        // `Target_GetSizeAndAlignOf`, `Target_GetTypeRepr` or `set_type_repr`), so this
-        // only reads the cache and cannot recurse back into this enum.
+        // An enum inherits user-alignment from any variant, as in gcc; every variant repr is already cached here, so this cannot recurse.
         for(const auto& f : rv.fields) {
             if( type_has_user_alignment(sp, resolve, f.ty) ) {
                 rv.user_align = true;
@@ -2281,16 +2216,7 @@ namespace {
         };
 
         TypeRepr  rv;
-        // codegen_c pins every union's alignment with an explicit
-        // `__attribute__((aligned))` rather than letting the C compiler derive it (a
-        // union takes its *first* member's alignment under the power ABI, and the
-        // variants are emitted in declaration order, so `MaybeUninit<u128>` would come
-        // out 1-aligned). That attribute is user-alignment as far as gcc is concerned,
-        // so it exempts the union - and every aggregate containing it - from the
-        // member-alignment cap. The model has to know that, or it under-computes the
-        // enclosing type: `BTreeMap`'s `LeafNode<String, Metric>` holds a
-        // `[MaybeUninit<Metric>; 11]` 140 bytes in and gcc makes the whole node 320/8
-        // where mrustc said 316/4.
+        // codegen_c pins union alignment with an explicit `__attribute__((aligned))`, which gcc counts as user-alignment - so a union, and anything containing it, is exempt from the cap.
         rv.user_align = true;
         for(const auto& var : unn.m_variants)
         {

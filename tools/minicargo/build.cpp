@@ -40,29 +40,8 @@ bool deferred_codegen_enabled() {
 
 /// Repoint a dependency at the deferred codegen job instead of the transpile job.
 ///
-/// This was open-coded as `if( d[d.size()-1] != ')' ) d += " (codegen)";`, where the
-/// test is meant to read "not already suffixed". It doesn't: a host crate's job name
-/// already ends in "(host)", so its dependencies kept pointing at the transpile job
-/// and could be linked against before codegen had produced their object file.
-/// `crc32c`'s build script is the case - it links `semver` and `rustc_version`, both
-/// host crates, and ld fails on the missing `.rlib.o`. It presents as an intermittent
-/// race because it only fires when the scheduler reaches the dependent first.
-/// Note the second exclusion: a crate's dependency list also contains its own
-/// build-script *run* job (see `job->m_dependencies.push_back(bs_job_name)`), and
-/// a build script has no deferred codegen job - it is a host binary that is built
-/// and run directly. Appending the suffix there produces "<crate> (script run)
-/// (codegen)", which nothing will ever announce as complete, and the whole
-/// dependency tree behind that crate deadlocks:
-///
-///   BUG: Nothing runnable or running, but 91 job(s) are still waiting
-///   - 'quote v1.0.47 (host)'
-///      waiting on 'quote v1.0.47 (script run) (codegen)'
-///
-/// The original open-coded test ("not already ending in ')'") excluded these by
-/// accident, so this only became reachable once that test was corrected for
-/// "(host)" - and then only for a crate whose build script actually has a job this
-/// run, which is why most crates, with their script output already cached, were
-/// unaffected.
+/// The suffix must not be appended to a build-script *run* job: those have no codegen job, and the resulting name is never announced, deadlocking the tree.
+/// The previous test ("not already ending in ')'") excluded those by accident while also skipping host crates, whose names end in "(host)".
 static bool has_suffix(const ::std::string& s, const char* suffix) {
     const size_t n = ::std::strlen(suffix);
     return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
@@ -134,15 +113,6 @@ struct RunState
         return get_output_dir(true) / get_build_script_out(manifest) + "_run" EXESUF;
     }
     /// Get `OUT_DIR`: where a package's build script writes its generated sources.
-    ///
-    /// A build script is native code, so it is built and run as a *host* binary,
-    /// once per package - hence `get_output_dir(true)`, matching
-    /// `get_build_script_exe` above and `Job_RunScript::get_outfile`. The crate
-    /// compile that consumes those generated sources has to look in the same
-    /// place, and it is a separate job with its own notion of host-ness, so both
-    /// sides go through this one accessor instead of deriving the path twice.
-    /// When not cross compiling `get_output_dir` ignores its argument, which is
-    /// why a mismatch here was only ever visible on a cross build.
     ::helpers::path get_build_script_out_dir(const PackageManifest& manifest) const {
         return get_output_dir(true) / get_build_script_out(manifest);
     }
@@ -946,13 +916,8 @@ void Job_Build::push_args_common(StringList& args, const helpers::path& outfile,
     if( parent.m_opts.enable_debug ) {
         args.push_back("-g");
     }
-    // `debug_assertions` also switches on libcore's `assert_unsafe_precondition!`.
-    // Those assert Rust-level invariants that a target whose C ABI lays structs out
-    // differently from Rust cannot satisfy: on powerpc-apple-darwin the "power"
-    // alignment rule (see src/trans/target.cpp) puts an 8-aligned field at a
-    // 4-aligned offset, so `ptr::write`'s precondition aborts every program during
-    // `std::rt::init`. The emitted C is still correct - gcc knows the member's real
-    // alignment and emits matching accesses - only the assertion disagrees.
+    // `debug_assertions` enables `assert_unsafe_precondition!`, which asserts Rust-level invariants a C-ABI-driven layout cannot satisfy:
+    // under the power alignment rule an 8-aligned field sits at a 4-aligned offset, so `ptr::write`'s precondition aborts during `rt::init`.
     if( !getenv("MINICARGO_NO_DEBUG_ASSERTIONS") ) {
         if( parent.is_rustc() ) {
             args.push_back("-C"); args.push_back("debug-assertions");
@@ -1128,11 +1093,7 @@ RunnableJob Job_BuildTarget::start()
 
     // Environment variables (rustc_env)
     StringListKV    env;
-    // NOTE: keyed on the build script's host-ness, not this crate's - see
-    // `get_build_script_out_dir`. Using `m_is_for_host` here pointed a
-    // cross-compiled crate at a directory the script had never written to, so
-    // e.g. `crc32c` failed on its generated `sw.table` with a bare
-    // "Unable to open file".
+    // Keyed on the build script's host-ness, not this crate's: a build script is always a host binary, and its OUT_DIR follows it.
     auto out_dir = parent.get_build_script_out_dir(m_manifest).to_absolute();
     env.push_back("OUT_DIR", out_dir.str());
     for(const auto& e : m_manifest.build_script_output().rustc_env) {

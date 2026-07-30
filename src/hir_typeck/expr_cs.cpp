@@ -713,10 +713,7 @@ namespace {
         }
         void visit(::HIR::ExprNode_CallPath& node) override {
             TRACE_FUNCTION_F(node.m_path << "(...)");
-            // Retry populating the cache now that inference may have advanced
-            // (the main pass deferred here because the callee was ambiguous,
-            // e.g. an unresolved const-generic). Mirrors the CallMethod revisit
-            // below and the success path in expr_cs__enum.cpp.
+            // Retry the cache now inference may have advanced; the main pass deferred here because the callee was ambiguous.
             if( !typecheck::visit_call_populate_cache(this->context, node.span(), node.m_path, node.m_cache) )
             {
                 DEBUG("- CallPath still ambiguous - trying again later");

@@ -546,15 +546,7 @@ namespace {
                 return ;
             }
 
-            // A higher-ranked lifetime is universally quantified, so there is no
-            // concrete region to relate it to and no constraint to record here -
-            // treat it as the same no-op as `lhs == rhs` above rather than
-            // aborting. `sanity_check_lft` already stopped rejecting HRLs outright
-            // for the same reason. They reach this point from monomorphising a
-            // nested binder whose enclosing HRL batch does not cover the index; see
-            // the matching passthroughs in hir_typeck/common.cpp and monomorph.hpp.
-            // Lifetimes are erased before codegen, so dropping the edge cannot
-            // change the emitted C.
+            // A higher-ranked lifetime has no concrete region to relate to, so this is a no-op rather than an abort; lifetimes are erased before codegen.
             if( lhs.is_hrl() || rhs.is_hrl() ) {
                 DEBUG("HRL - no constraint to record");
                 return ;
