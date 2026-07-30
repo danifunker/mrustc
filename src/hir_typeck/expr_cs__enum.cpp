@@ -1489,7 +1489,8 @@ namespace typecheck
                 this->context.add_ivars( val->m_res_type );
             }
 
-            // Populate the call cache; if the path is still ambiguous (e.g. an unresolved const-generic on the callee), defer the equates to a revisit rather than aborting.
+            // Populate cache
+            // - If the path is still ambiguous, defer the equates to a revisit rather than aborting.
             const bool cache_ok = visit_call_populate_cache(this->context, node.span(), node.m_path, node.m_cache);
             if( cache_ok )
             {
@@ -1504,6 +1505,8 @@ namespace typecheck
                             << " - exp " << exp_argc << " got " << node.m_args.size());
                     }
                 }
+
+                // TODO: Figure out a way to disable coercions in desugared for loops (will speed up typecheck)
 
                 // Link arguments
                 // - NOTE: Uses the cache for the count because vaargs aren't checked (they're checked for suitability in expr_check.cpp)

@@ -1788,9 +1788,8 @@ namespace {
             if(packing_max_align == 0 && c_max_align != repr->align /*&& repr->size > 0*/) {
                 has_manual_align = true;
             }
-            // An align-1 type must be emitted packed even when not `repr(packed)`: gcc derives a container's alignment from the member's *natural*
-            // alignment, ignoring the `#pragma pack` in force where the member was defined, and `aligned(N)` cannot lower alignment to correct it.
-            // Safe because Rust guarantees an align-1 type is tight, so `pack(1)` cannot move a field.
+            // An align-1 type must be emitted packed even when not `repr(packed)`: gcc takes a container's alignment from the
+            // member's natural alignment, ignoring the `#pragma pack` the member was defined under, and `aligned(N)` cannot lower it.
             if(packing_max_align == 0 && !has_manual_align && repr->align == 1 && repr->size > 1) {
                 packing_max_align = 1;
             }

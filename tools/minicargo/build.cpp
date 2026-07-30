@@ -39,9 +39,7 @@ bool deferred_codegen_enabled() {
 }
 
 /// Repoint a dependency at the deferred codegen job instead of the transpile job.
-///
-/// The suffix must not be appended to a build-script *run* job: those have no codegen job, and the resulting name is never announced, deadlocking the tree.
-/// The previous test ("not already ending in ')'") excluded those by accident while also skipping host crates, whose names end in "(host)".
+/// Not for a build-script run job: it has no codegen job, so the name is never announced and the tree deadlocks.
 static bool has_suffix(const ::std::string& s, const char* suffix) {
     const size_t n = ::std::strlen(suffix);
     return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;

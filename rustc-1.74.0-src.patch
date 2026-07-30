@@ -147,15 +147,8 @@
  #include <memory>
  
 
-#
-# `macos_weak` is compiled for every non-aarch64 macOS target, but only defines the
-# `fdopendir` weak symbol for x86 and x86_64. On any other 32-bit macOS target
-# (powerpc-apple-darwin) neither arm is emitted, so the name resolves to the
-# enclosing `fdopendir` fn and `.get()` has no applicable method. 10.4 has no
-# `$INODE64` variants at all, so the plain symbol is also the correct one there -
-# and on Tiger, where `fdopendir` does not exist, the weak lookup returns None and
-# `remove_dir_all` falls back to its non-openat path, which is the intent here.
-#
+# macos_weak only defines the fdopendir weak symbol for x86/x86_64; other macOS targets emit neither arm.
+# 10.4/10.5 have no $INODE64 variants, so the plain symbol is the correct one there.
 --- library/std/src/sys/unix/fs.rs
 +++ library/std/src/sys/unix/fs.rs
 @@ -1979,6 +1979,8 @@
@@ -168,11 +161,7 @@
                  crate::sys::unix::os::set_errno(libc::ENOSYS);
                  crate::ptr::null_mut()
 
-#
-# std's Darwin thread parker is built on libdispatch (dispatch_semaphore_*), which
-# is 10.6+. powerpc-apple-darwin is by definition 10.4/10.5, so it must fall
-# through to the generic pthread parker.
-#
+# The Darwin thread parker needs libdispatch (10.6+); powerpc-apple-darwin is 10.4/10.5, so use the generic pthread parker.
 --- library/std/src/sys/unix/thread_parking/mod.rs
 +++ library/std/src/sys/unix/thread_parking/mod.rs
 @@ -18,6 +18,10 @@

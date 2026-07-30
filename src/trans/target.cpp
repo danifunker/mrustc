@@ -1121,9 +1121,10 @@ namespace {
         {
             auto align = e.align;
 
-            // PowerPC "power" alignment (Darwin/AIX): first member natural, later members with natural align 4..8 capped to 4, ZSTs skipped.
-            // Applies to Rust types too, not just repr(C): mrustc emits plain C structs, so this model must match the C compiler's.
-            // The cap is on natural alignment only - an explicitly aligned member keeps it and raises the enclosing struct's align.
+            // PowerPC 32-bit ABI
+            // First element uses natural alignment, subsequent elements with natural alignment
+            // >= 4 and up to 8 use embedding = 4. Skip ZST.
+            // The cap is on natural alignment only: an explicitly aligned member keeps it, as in gcc.
             if(target_caps_member_alignment())
             {
                 if ( e.size > 0 )
