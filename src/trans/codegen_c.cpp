@@ -1302,13 +1302,18 @@ namespace {
             {
             case Compiler::Gcc:
                 // Pick the compiler
-                // - from `CC_${TRIPLE}` environment variable, with all '-' in TRIPLE replaced by '_'
+                // - from `CC_${TRIPLE}` environment variable, with everything in TRIPLE that
+                //   cannot appear in a shell variable name replaced by '_'
                 // - from the `CC` environment variable
                 // - `${TRIPLE}-gcc` (if available)
                 // - `gcc` as fallback
                 {
                     std::string varname = "CC_" +  Target_GetCurSpec().m_backend_c.m_c_compiler;
-                    std::replace(varname.begin(), varname.end(), '-', '_');
+                    // Not just '-': a triple naming an OS release has a '.' in it, and no shell
+                    // can export a variable whose name contains one.
+                    for(auto& c : varname)
+                        if( !isalnum(static_cast<unsigned char>(c)) )
+                            c = '_';
 
                     if( getenv(varname.c_str()) ) {
                         args.push_back( getenv(varname.c_str()) );
