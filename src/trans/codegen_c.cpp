@@ -419,28 +419,26 @@ namespace {
                     << "\treturn false;\n"
                     << "}\n"
                     << "static inline bool __builtin_mul_overflow_i8(int8_t a, int8_t b, int8_t* out) {\n"
-                    << "\t*out = a*b;\n"    // Wait, this isn't valid?
-                    << "\tif(b == 0) return false;\n"
-                    << "\tif(a > INT8_MAX/b)  return true;\n"
-                    << "\tif(a < INT8_MIN/b)  return true;\n"
-                    << "\tif( (a == -1) && (b == INT8_MIN))  return true;\n"
-                    << "\tif( (b == -1) && (a == INT8_MIN))  return true;\n"
-                    << "\treturn false;\n"
+                    << "\t*out = (int8_t)((uint8_t)a * (uint8_t)b);\n"
+                    << "\tif(a == 0 || b == 0) return false;\n"
+                    << "\tif(a == -1) return b == INT8_MIN;\n"
+                    << "\tif(b == -1) return a == INT8_MIN;\n"
+                    << "\tif(a > 0) return b > 0 ? a > INT8_MAX / b : b < INT8_MIN / a;\n"
+                    << "\treturn b > 0 ? a < INT8_MIN / b : a < INT8_MAX / b;\n"
                     << "}\n"
                     << "static inline bool __builtin_mul_overflow_u16(uint16_t a, uint16_t b, uint16_t* out) {\n"
-                    << "\t*out = a*b;\n"
+                    << "\t*out = (uint16_t)((unsigned)a * (unsigned)b);\n"    // 16-bit operands promote to `int`, whose range the product can leave
                     << "\tif(b == 0) return false;\n"
                     << "\tif(a > UINT16_MAX/b)  return true;\n"
                     << "\treturn false;\n"
                     << "}\n"
                     << "static inline bool __builtin_mul_overflow_i16(int16_t a, int16_t b, int16_t* out) {\n"
-                    << "\t*out = a*b;\n"    // Wait, this isn't valid?
-                    << "\tif(b == 0) return false;\n"
-                    << "\tif(a > INT16_MAX/b)  return true;\n"
-                    << "\tif(a < INT16_MIN/b)  return true;\n"
-                    << "\tif( (a == -1) && (b == INT16_MIN))  return true;\n"
-                    << "\tif( (b == -1) && (a == INT16_MIN))  return true;\n"
-                    << "\treturn false;\n"
+                    << "\t*out = (int16_t)((unsigned)a * (unsigned)b);\n"    // 16-bit operands promote to `int`, whose range the product can leave
+                    << "\tif(a == 0 || b == 0) return false;\n"
+                    << "\tif(a == -1) return b == INT16_MIN;\n"
+                    << "\tif(b == -1) return a == INT16_MIN;\n"
+                    << "\tif(a > 0) return b > 0 ? a > INT16_MAX / b : b < INT16_MIN / a;\n"
+                    << "\treturn b > 0 ? a < INT16_MIN / b : a < INT16_MAX / b;\n"
                     << "}\n"
                     << "static inline bool __builtin_mul_overflow_u32(uint32_t a, uint32_t b, uint32_t* out) {\n"
                     << "\t*out = a*b;\n"
@@ -449,13 +447,12 @@ namespace {
                     << "\treturn false;\n"
                     << "}\n"
                     << "static inline bool __builtin_mul_overflow_i32(int32_t a, int32_t b, int32_t* out) {\n"
-                    << "\t*out = a*b;\n"    // Wait, this isn't valid?
-                    << "\tif(b == 0) return false;\n"
-                    << "\tif(a > INT32_MAX/b)  return true;\n"
-                    << "\tif(a < INT32_MIN/b)  return true;\n"
-                    << "\tif( (a == -1) && (b == INT32_MIN))  return true;\n"
-                    << "\tif( (b == -1) && (a == INT32_MIN))  return true;\n"
-                    << "\treturn false;\n"
+                    << "\t*out = (int32_t)((uint32_t)a * (uint32_t)b);\n"
+                    << "\tif(a == 0 || b == 0) return false;\n"
+                    << "\tif(a == -1) return b == INT32_MIN;\n"
+                    << "\tif(b == -1) return a == INT32_MIN;\n"
+                    << "\tif(a > 0) return b > 0 ? a > INT32_MAX / b : b < INT32_MIN / a;\n"
+                    << "\treturn b > 0 ? a < INT32_MIN / b : a < INT32_MAX / b;\n"
                     << "}\n"
                     << "static inline bool __builtin_mul_overflow_u64(uint64_t a, uint64_t b, uint64_t* out) {\n"
                     << "\t*out = a*b;\n"
@@ -464,13 +461,12 @@ namespace {
                     << "\treturn false;\n"
                     << "}\n"
                     << "static inline bool __builtin_mul_overflow_i64(int64_t a, int64_t b, int64_t* out) {\n"
-                    << "\t*out = a*b;\n"    // Wait, this isn't valid?
-                    << "\tif(b == 0) return false;\n"
-                    << "\tif(a > INT64_MAX/b)  return true;\n"
-                    << "\tif(a < INT64_MIN/b)  return true;\n"
-                    << "\tif( (a == -1) && (b == INT64_MIN))  return true;\n"
-                    << "\tif( (b == -1) && (a == INT64_MIN))  return true;\n"
-                    << "\treturn false;\n"
+                    << "\t*out = (int64_t)((uint64_t)a * (uint64_t)b);\n"
+                    << "\tif(a == 0 || b == 0) return false;\n"
+                    << "\tif(a == -1) return b == INT64_MIN;\n"
+                    << "\tif(b == -1) return a == INT64_MIN;\n"
+                    << "\tif(a > 0) return b > 0 ? a > INT64_MAX / b : b < INT64_MIN / a;\n"
+                    << "\treturn b > 0 ? a < INT64_MIN / b : a < INT64_MAX / b;\n"
                     << "}\n"
                     << "static inline bool __builtin_mul_overflow_usize(uintptr_t a, uintptr_t b, uintptr_t* out) {\n"
                     << "\treturn __builtin_mul_overflow_u" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
@@ -517,38 +513,38 @@ namespace {
                     << "\treturn __builtin_add_overflow_u" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
                     << "}\n"
                     << "static inline bool __builtin_sub_overflow_i64(int64_t a, int64_t b, int64_t* o) {\n"
-                    << "\t""*o = a - b;\n"
+                    << "\t""*o = (int64_t)((uint64_t)a - (uint64_t)b);\n"
                     << "\t""return ((b < 0) && (a > INT64_MAX + b)) || ((b > 0) && (a < INT64_MIN + b));\n"
                     << "}\n"
                     << "static inline bool __builtin_sub_overflow_i32(int32_t a, int32_t b, int32_t* o) {\n"
-                    << "\t""*o = a - b;\n"
+                    << "\t""*o = (int32_t)((uint32_t)a - (uint32_t)b);\n"
                     << "\t""return ((b < 0) && (a > INT32_MAX + b)) || ((b > 0) && (a < INT32_MIN + b));\n"
                     << "}\n"
                     << "static inline bool __builtin_sub_overflow_i16(int16_t a, int16_t b, int16_t* o) {\n"
-                    << "\t""*o = a - b;\n"
+                    << "\t""*o = (int16_t)((uint16_t)a - (uint16_t)b);\n"
                     << "\t""return ((b < 0) && (a > INT16_MAX + b)) || ((b > 0) && (a < INT16_MIN + b));\n"
                     << "}\n"
                     << "static inline bool __builtin_sub_overflow_i8(int8_t a, int8_t b, int8_t* o) {\n"
-                    << "\t""*o = a - b;\n"
+                    << "\t""*o = (int8_t)((uint8_t)a - (uint8_t)b);\n"
                     << "\t""return ((b < 0) && (a > INT8_MAX + b)) || ((b > 0) && (a < INT8_MIN + b));\n"
                     << "}\n"
                     << "static inline bool __builtin_sub_overflow_isize(intptr_t a, intptr_t b, intptr_t* out) {\n"
                     << "\treturn __builtin_sub_overflow_i" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
                     << "}\n"
                     << "static inline bool __builtin_add_overflow_i64(int64_t a, int64_t b, int64_t* o) {\n"
-                    << "\t""*o = a + b;\n"
+                    << "\t""*o = (int64_t)((uint64_t)a + (uint64_t)b);\n"
                     << "\t""return ((b > 0) && (a > INT64_MAX - b)) || ((b < 0) && (a < INT64_MIN - b));\n"
                     << "}\n"
                     << "static inline bool __builtin_add_overflow_i32(int32_t a, int32_t b, int32_t* o) {\n"
-                    << "\t""*o = a + b;\n"
+                    << "\t""*o = (int32_t)((uint32_t)a + (uint32_t)b);\n"
                     << "\t""return ((b > 0) && (a > INT32_MAX - b)) || ((b < 0) && (a < INT32_MIN - b));\n"
                     << "}\n"
                     << "static inline bool __builtin_add_overflow_i16(int16_t a, int16_t b, int16_t* o) {\n"
-                    << "\t""*o = a + b;\n"
+                    << "\t""*o = (int16_t)((uint16_t)a + (uint16_t)b);\n"
                     << "\t""return ((b > 0) && (a > INT16_MAX - b)) || ((b < 0) && (a < INT16_MIN - b));\n"
                     << "}\n"
                     << "static inline bool __builtin_add_overflow_i8(int8_t a, int8_t b, int8_t* o) {\n"
-                    << "\t""*o = a + b;\n"
+                    << "\t""*o = (int8_t)((uint8_t)a + (uint8_t)b);\n"
                     << "\t""return ((b > 0) && (a > INT8_MAX - b)) || ((b < 0) && (a < INT8_MIN - b));\n"
                     << "}\n"
                     << "static inline bool __builtin_add_overflow_isize(intptr_t a, intptr_t b, intptr_t* out) {\n"
@@ -3573,6 +3569,35 @@ namespace {
             return align >Target_GetPointerBits() / 8;
         }
 
+        // Tag type of a fieldless enum, which C spells as a plain integer rather than our one-field struct.
+        const ::HIR::TypeRef* enum_ffi_tag_ty(const ::HIR::TypeRef& ty) const
+        {
+            if( !ty.data().is_Path() )
+                return nullptr;
+            if( !ty.data().as_Path().binding.is_Enum() )
+                return nullptr;
+            const auto* repr = Target_GetTypeRepr(sp, m_resolve, ty);
+            if( !repr )
+                return nullptr;
+            // One field plus value-only variants is the shape emit_enum renders as a bare TAG.
+            if( repr->fields.size() != 1 || !repr->variants.is_Values() )
+                return nullptr;
+            return &repr->fields[0].ty;
+        }
+
+        // Arguments only; a C function returning such an enum has the same mismatch, untested here.
+        // Non-Rust ABIs must match the C declaration; Rust-ABI calls are ours on both sides.
+        static bool abi_is_c_like(const RcString& abi)
+        {
+            return abi != "Rust" && abi != "rust-intrinsic" && abi != "platform-intrinsic";
+        }
+
+        // Only a body-less extern is a real C boundary; a Rust-defined `extern "C"` fn is a struct on both sides.
+        static bool fn_is_c_abi_extern(const ::HIR::Function& fcn)
+        {
+            return !fcn.m_code.m_mir && abi_is_c_like(fcn.m_abi);
+        }
+
         void emit_borrow(const ::MIR::TypeResolve& mir_res, HIR::BorrowType bt, const MIR::LValue& val)
         {
             ::HIR::TypeRef  tmp;
@@ -4823,6 +4848,8 @@ namespace {
             }
 
             bool omit_assign = false;
+            // Callee ABI decides the spelling: C takes the integer, Rust ABI keeps the struct.
+            bool callee_is_c_abi = false;
 
             // If the return type is `()`, omit the assignment (all `()` returning functions are marked as returning
             // void)
@@ -4861,6 +4888,7 @@ namespace {
                     TU_ARMA(Generic, pe) {
                         const auto& fcn = m_crate.get_function_by_path(sp, pe.m_path);
                         omit_assign |= fcn.m_return.data().is_Diverge();
+                        callee_is_c_abi = fn_is_c_abi_extern(fcn);
                         // TODO: Monomorph.
                         }
                     TU_ARMA(UfcsUnknown, pe) {
@@ -4946,6 +4974,11 @@ namespace {
                     continue;
                 }
                 emit_param(e.args[j]);
+                // The C callee declared this parameter as the tag's integer, so pass the tag.
+                if( callee_is_c_abi && this->enum_ffi_tag_ty(ty) )
+                {
+                    m_of << ".TAG";
+                }
             }
             m_of << " );\n";
 
@@ -5957,7 +5990,11 @@ namespace {
                         ss << "\n\t\t";
                         // TODO: If the type has a high alignment, emit as a pointer? Might have FFI issues
                         auto ty = params.monomorph(m_resolve, item.m_args[i].second);
-                        this->emit_ctype( ty, FMT_CB(os, os << (this->type_is_high_align(ty) ? "*":"") << "arg" << i;) );
+                        // A C ABI spells a fieldless enum as its integer; see enum_ffi_tag_ty.
+                        const ::HIR::TypeRef* tag_ty = nullptr;
+                        if( fn_is_c_abi_extern(item) )
+                            tag_ty = this->enum_ffi_tag_ty(ty);
+                        this->emit_ctype( tag_ty ? *tag_ty : ty, FMT_CB(os, os << (this->type_is_high_align(ty) ? "*":"") << "arg" << i;) );
                         if( item.m_variadic || i+1 < item.m_args.size() )    m_of << ",";
                         m_of << " // " << ty;
                     }
@@ -6627,7 +6664,9 @@ namespace {
                 emit_lvalue(e.ret_val); m_of << " = "; emit_param(e.args.at(0)); m_of << " + "; emit_param(e.args.at(1));
             }
             else if( name == "arith_offset" ) { // addition, with no requirements
-                emit_lvalue(e.ret_val); m_of << " = "; emit_param(e.args.at(0)); m_of << " + "; emit_param(e.args.at(1));
+                std::size_t size = 0;
+                MIR_ASSERT(mir_res, Target_GetSizeOf(sp, m_resolve, params.m_types.at(0), size), "Size of " << params.m_types.at(0) << " is unknown");
+                emit_lvalue(e.ret_val); m_of << " = ("; emit_ctype(params.m_types.at(0)); m_of << "*)((uintptr_t)"; emit_param(e.args.at(0)); m_of << " + (uintptr_t)"; emit_param(e.args.at(1)); m_of << " * (uintptr_t)" << size << ")";
             }
             else if( name == "ptr_offset_from" ) {  // effectively subtraction
                 emit_lvalue(e.ret_val); m_of << " = "; emit_param(e.args.at(0)); m_of << " - "; emit_param(e.args.at(1));
