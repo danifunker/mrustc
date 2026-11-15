@@ -638,8 +638,8 @@ namespace MIR { namespace eval {
             switch(bits)
             {
             case 16: { F16 v_f = v; write_bytes(state, &v_f, sizeof(v_f)); } break;
-            case 32: { float  v_f32 = v; write_bytes(state, &v_f32, sizeof(v_f32)); } break;
-            case 64: { double v_f64 = v; write_bytes(state, &v_f64, sizeof(v_f64)); } break;
+            case 32: { float  v_f32 = v; uint32_t b; memcpy(&b, &v_f32, 4); write_uint(state, 32, b); } break;
+            case 64: { double v_f64 = v; uint64_t b; memcpy(&b, &v_f64, 8); write_uint(state, 64, b); } break;
             case 128: { F128 v_f128 = v; write_bytes(state, &v_f128, 16); } break;
             default:
                 MIR_BUG(state, "Unexpected float size (write): " << bits);
@@ -690,8 +690,8 @@ namespace MIR { namespace eval {
         double read_float(const ::MIR::TypeResolve& state, unsigned bits) const {
             switch(bits)
             {
-            case 32: { float  v_f32 = 0; read_bytes(state, &v_f32, sizeof(v_f32)); return v_f32; } break;
-            case 64: { double v_f64 = 0; read_bytes(state, &v_f64, sizeof(v_f64)); return v_f64; } break;
+            case 32: { uint32_t b = read_uint(state, 32).truncate_u64(); float  v_f32; memcpy(&v_f32, &b, 4); return v_f32; } break;
+            case 64: { uint64_t b = read_uint(state, 64).truncate_u64(); double v_f64; memcpy(&v_f64, &b, 8); return v_f64; } break;
             case 128:{ F128 v_f; read_bytes(state, &v_f, sizeof(v_f)); return v_f; } break;
             default:
                 MIR_BUG(state, "Unexpected float size: " << bits);

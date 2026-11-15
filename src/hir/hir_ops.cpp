@@ -1462,8 +1462,8 @@ double EncodedLiteralSlice::read_float(size_t size/*=0*/) const {
     switch(size)
     {
     case 2: { F16 v; memcpy(&v, &m_base.bytes[m_ofs], 2); return v; }
-    case 4: { float v; memcpy(&v, &m_base.bytes[m_ofs], 4); return v; }
-    case 8: { double v; memcpy(&v, &m_base.bytes[m_ofs], 8); return v; }
+    case 4: { uint32_t b = read_uint(4).truncate_u64(); float v; memcpy(&v, &b, 4); return v; }
+    case 8: { uint64_t b = read_uint(8).truncate_u64(); double v; memcpy(&v, &b, 8); return v; }
     case 16: { F128 v; memcpy(&v,  &m_base.bytes[m_ofs], 16); return v; }
     default: BUG(Span(), "Unexpected float size");
     }
