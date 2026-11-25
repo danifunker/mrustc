@@ -271,6 +271,21 @@ namespace {
 
 
         ::std::set< ::HIR::TypeRef> m_emitted_fn_types;
+        // C89: the alignment the C compiler gives each struct emitted so far (the fields' own, or
+        // the one the tail padding gives), for the padding of the structs that contain them
+        ::std::map< ::HIR::TypeRef, size_t> m_c89_struct_align;
+        size_t c89_c_align(const ::HIR::TypeRef& t, size_t rust_align) const
+        {
+            if( const auto* te = t.data().opt_Array() ) {
+                size_t a = 1;
+                Target_GetAlignOf(sp, m_resolve, te->inner, a);
+                return c89_c_align(te->inner, a);
+            }
+            auto it = m_c89_struct_align.find(t);
+            if( it != m_c89_struct_align.end() )
+                return it->second;
+            return c89_align(rust_align);
+        }
         ::std::set< const TypeRepr*>    m_embedded_tags;
     public:
         CodeGenerator_C(const ::HIR::Crate& crate, const ::std::string& outfile):
@@ -2086,6 +2101,7 @@ namespace {
             bool has_unsized = false;
             size_t sized_fields = 0;
             size_t  cur_ofs = 0;
+            size_t  c89_fields_align = 1;   // C89: the alignment the C compiler gives the fields
             for(unsigned fld : fields)
             {
                 const auto& ty = repr->fields[fld].ty;
@@ -2117,7 +2133,8 @@ namespace {
                     // C89 (Visual C++ 4.x): the C compiler aligns to at most 8; padding makes up the rest
                     if( m_options.c89 )
                     {
-                        field_align = c89_align(field_align);
+                        field_align = c89_c_align(ty, field_align);
+                        c89_fields_align = std::max(c89_fields_align, field_align);
                     }
                     a = packing_max_align > 0 ? std::min<size_t>(packing_max_align, field_align) : field_align;
                     DEBUG("a = " << a);
@@ -2172,23 +2189,26 @@ namespace {
             {
                 m_of << "\tchar _d;\n";
             }
-            // C89: alignment above 8 is not available, so pad to the size (the start is only 8-aligned)
+            // C89: no `__declspec(align)` (and nothing above 8): pad to the size. If the fields' own
+            // alignment is short of what the padding of an enclosing struct will assume (up to 8), make
+            // the tail padding of words of that size, which gives the struct that alignment.
             else if( m_options.c89 && !has_unsized && repr->size != SIZE_MAX && cur_ofs < repr->size )
             {
-                m_of << "\tuint8_t _tailpad[" << (repr->size - cur_ofs) << "];\n";
-            }
-            // C89: no `__declspec(align)`, so a zero-length array gives the struct the alignment the
-            // padding assumed (up to 8), whatever its fields have. Last (Visual C++ 4.x allows a
-            // zero-sized array nowhere else), at the end of the padded size, so it adds nothing.
-            if( m_options.c89 && has_manual_align && c89_align(repr->align) > 1 && !has_unsized && repr->size > 0 && repr->size != SIZE_MAX )
-            {
-                switch( c89_align(repr->align) )
+                size_t need = c89_align(repr->align);
+                size_t p = (cur_ofs + need - 1) / need * need;
+                if( need > c89_fields_align && p + need <= repr->size )
                 {
-                case 2: m_of << "\tuint16_t _align[0];\n"; break;
-                case 4: m_of << "\tuint32_t _align[0];\n"; break;
-                default: m_of << "\tuint64_t _align[0];\n"; break;
+                    if( p > cur_ofs )
+                        m_of << "\tuint8_t _tailpad[" << (p - cur_ofs) << "];\n";
+                    m_of << "\tuint" << need*8 << "_t _tailalign[" << (repr->size - p) / need << "];\n";
+                    c89_fields_align = need;
+                }
+                else
+                {
+                    m_of << "\tuint8_t _tailpad[" << (repr->size - cur_ofs) << "];\n";
                 }
             }
+
             m_of << "}";
             if(has_manual_align)
             {
@@ -2229,6 +2249,10 @@ namespace {
             if( packing_max_align != 0 )
             {
                 m_of << "#pragma pack(pop)\n";
+            }
+            if( m_options.c89 )
+            {
+                m_c89_struct_align[ty.clone()] = packing_max_align ? std::min<size_t>(packing_max_align, c89_fields_align) : c89_fields_align;
             }
         }
 
@@ -2358,7 +2382,7 @@ namespace {
             if( !m_options.c89 )
                 m_of << "typedef char alignof_assert_" << Trans_Mangle(p) << "[ (ALIGNOF(struct s_" << Trans_Mangle(p) << ") == " << repr->align << ") ? 1 : -1 ];\n";
             else if( repr->size != SIZE_MAX )  // (an unsized one isn't given the alignment: see emit_struct_inner)
-                m_of << "#ifdef MRUSTC_C89_ALIGNCHECK\ntypedef char alignof_assert_" << Trans_Mangle(p) << "[ (__alignof(struct s_" << Trans_Mangle(p) << ") == " << c89_align(repr->align) << ") ? 1 : -1 ];\n#endif\n";
+                m_of << "#ifdef MRUSTC_C89_ALIGNCHECK\ntypedef char alignof_assert_" << Trans_Mangle(p) << "[ (__alignof(struct s_" << Trans_Mangle(p) << ") == " << c89_c_align(item_ty, repr->align) << ") ? 1 : -1 ];\n#endif\n";
 
             m_mir_res = nullptr;
         }
