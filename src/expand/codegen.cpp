@@ -398,6 +398,9 @@ class CHandler_LinkName:
     }
 };
 STATIC_DECORATOR("link_name", CHandler_LinkName);
+// `#[export_name]` on a definition: the same, the symbol it is defined under
+class CHandler_ExportName: public CHandler_LinkName {};
+STATIC_DECORATOR("export_name", CHandler_ExportName);
 
 class CHandler_LinkSection:
     public ExpandDecorator

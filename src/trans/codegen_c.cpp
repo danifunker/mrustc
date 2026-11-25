@@ -347,20 +347,36 @@ namespace {
                         << "static double __mrustc_f64_bits(uint64_t v) { double d; memcpy(&d, &v, 8); return d; }\n"
                         << "#define INFINITY __mrustc_f64_bits(0x7FF0000000000000ui64)\n"
                         << "#define NAN __mrustc_f64_bits(0x7FF8000000000000ui64)\n"
-                        << "static double trunc(double x) { return x < 0 ? ceil(x) : floor(x); }\n"
-                        << "static double round(double x) { double t = trunc(x); if( fabs(x - t) >= 0.5 ) t += (x < 0 ? -1.0 : 1.0); return t; }\n"
-                        << "static double copysign(double x, double y) { uint64_t a, b; memcpy(&a, &x, 8); memcpy(&b, &y, 8);"
+                        // Float to integer, saturating as Rust's `as` (Alpha traps on an out-of-range cvttq)
+                        << "static int64_t __mrustc_f2int(double x, double lo, double hi) { if(x != x) return 0; if(x <= lo) return (int64_t)lo; if(x >= hi) return (int64_t)hi; return (int64_t)x; }\n"
+                        << "static int64_t __mrustc_f2i64(double x) { if(x != x) return 0; if(x <= -9223372036854775808.0) return (-0x7FFFFFFFFFFFFFFFi64 - 1); if(x >= 9223372036854775808.0) return 0x7FFFFFFFFFFFFFFFi64; return (int64_t)x; }\n"
+                        << "static uint64_t __mrustc_f2u64(double x) { if(!(x > -1.0)) return 0; if(x >= 18446744073709551616.0) return 0xFFFFFFFFFFFFFFFFui64;"
+                        << " if(x >= 9223372036854775808.0) return (uint64_t)(int64_t)(x - 9223372036854775808.0) + 0x8000000000000000ui64; return (uint64_t)(int64_t)x; }\n"
+                        << "static double __mrustc_fabs(double x) { return fabs(x); }\n"
+                        << "static double __mrustc_floor(double x) { return floor(x); }\n"
+                        << "static double __mrustc_ceil(double x) { return ceil(x); }\n"
+                        << "static double __mrustc_sqrt(double x) { return sqrt(x); }\n"
+                        << "static double __mrustc_exp(double x) { return exp(x); }\n"
+                        << "static double __mrustc_log(double x) { return log(x); }\n"
+                        << "static double __mrustc_log10(double x) { return log10(x); }\n"
+                        << "static double __mrustc_sin(double x) { return sin(x); }\n"
+                        << "static double __mrustc_cos(double x) { return cos(x); }\n"
+                        << "static double __mrustc_pow(double x, double y) { return pow(x, y); }\n"
+                        << "static double __mrustc_fmod(double x, double y) { return fmod(x, y); }\n"
+                        << "static double __mrustc_trunc(double x) { return x < 0 ? ceil(x) : floor(x); }\n"
+                        << "static double __mrustc_round(double x) { double t = __mrustc_trunc(x); if( fabs(x - t) >= 0.5 ) t += (x < 0 ? -1.0 : 1.0); return t; }\n"
+                        << "static double __mrustc_copysign(double x, double y) { uint64_t a, b; memcpy(&a, &x, 8); memcpy(&b, &y, 8);"
                         << " a = (a & 0x7FFFFFFFFFFFFFFFui64) | (b & 0x8000000000000000ui64); memcpy(&x, &a, 8); return x; }\n"
-                        << "static double exp2(double x) { return pow(2.0, x); }\n"
-                        << "static double log2(double x) { return log(x) / 0.69314718055994530942; }\n"
-                        << "static double fma(double a, double b, double c) { return a * b + c; }\n"
+                        << "static double __mrustc_exp2(double x) { return pow(2.0, x); }\n"
+                        << "static double __mrustc_log2(double x) { return log(x) / 0.69314718055994530942; }\n"
+                        << "static double __mrustc_fma(double a, double b, double c) { return a * b + c; }\n"
                         ;
                     for(const char* fn : {"fabs", "floor", "ceil", "sqrt", "exp", "log", "log10", "sin", "cos", "trunc", "round", "exp2", "log2"})
-                        m_of << "#define " << fn << "f(x) ((float)" << fn << "((double)(x)))\n";
+                        m_of << "#define __mrustc_" << fn << "f(x) ((float)__mrustc_" << fn << "((double)(x)))\n";
                     for(const char* fn : {"pow", "fmod", "copysign"})
-                        m_of << "#define " << fn << "f(x, y) ((float)" << fn << "((double)(x), (double)(y)))\n";
+                        m_of << "#define __mrustc_" << fn << "f(x, y) ((float)__mrustc_" << fn << "((double)(x), (double)(y)))\n";
                     m_of
-                        << "#define fmaf(a, b, c) ((float)fma((double)(a), (double)(b), (double)(c)))\n"
+                        << "#define __mrustc_fmaf(a, b, c) ((float)__mrustc_fma((double)(a), (double)(b), (double)(c)))\n"
                         << "__declspec(dllimport) void* __stdcall InterlockedCompareExchange(void** Destination, void* Exchange, void* Comperand);\n"
                         ;
                     break;
@@ -1217,11 +1233,24 @@ namespace {
                 if(TARGETVER_LEAST_1_29)
                 {
                     // Bind `panic_impl` lang item to the item tagged with `panic_implementation`
-                    m_of << "uint32_t panic_impl(uintptr_t payload) {";
                     const auto& panic_impl_path = m_crate.get_lang_item_path(Span(), "mrustc-panic_implementation");
-                    m_of << "extern uint32_t " << Trans_Mangle(panic_impl_path) << "(uintptr_t payload);";
-                    m_of << "return " << Trans_Mangle(panic_impl_path) << "(payload);";
-                    m_of << "}\n";
+                    auto panic_info_path = m_crate.get_lang_item_path_opt("panic_info");
+                    if( m_options.c89 && panic_info_path != ::HIR::SimplePath() )
+                    {
+                        // C89: one name for both, so the type must be core's prototype's
+                        auto pi = FMT("struct s_" << Trans_Mangle(panic_info_path) << "*");
+                        m_of << "tBANG panic_impl(" << pi << " payload) {";
+                        m_of << "extern tBANG " << Trans_Mangle(panic_impl_path) << "(" << pi << " payload);";
+                        m_of << Trans_Mangle(panic_impl_path) << "(payload); abort();";
+                        m_of << "}\n";
+                    }
+                    else
+                    {
+                        m_of << "uint32_t panic_impl(uintptr_t payload) {";
+                        m_of << "extern uint32_t " << Trans_Mangle(panic_impl_path) << "(uintptr_t payload);";
+                        m_of << "return " << Trans_Mangle(panic_impl_path) << "(payload);";
+                        m_of << "}\n";
+                    }
                 }
             }
 
@@ -2053,6 +2082,17 @@ namespace {
                 m_of << "struct ";
             }
             emit_ctype(ty); m_of << " {\n";
+            // C89: no `__declspec(align)`, so a zero-length array gives the struct the alignment
+            // the padding below assumes (up to 8), whatever its fields have
+            if( m_options.c89 && has_manual_align && c89_align(repr->align) > 1 )
+            {
+                switch( c89_align(repr->align) )
+                {
+                case 2: m_of << "\tuint16_t _align[0];\n"; break;
+                case 4: m_of << "\tuint32_t _align[0];\n"; break;
+                default: m_of << "\tuint64_t _align[0];\n"; break;
+                }
+            }
 
             bool has_unsized = false;
             size_t sized_fields = 0;
@@ -2312,9 +2352,12 @@ namespace {
                 // TODO: Handle unsized (should check the size of the fixed-size region)
                 m_of << "typedef char sizeof_assert_" << Trans_Mangle(p) << "[ (sizeof(struct s_" << Trans_Mangle(p) << ") == " << repr->size << ") ? 1 : -1 ];\n";
             }
-            // C89 has no alignof (and the C alignment is capped at 8 there)
+            // C89 has no alignof (and the C alignment is capped at 8 there): the check is for a
+            // compiler that has one (MRUSTC_C89_ALIGNCHECK, e.g. clang checking the C89 output).
             if( !m_options.c89 )
                 m_of << "typedef char alignof_assert_" << Trans_Mangle(p) << "[ (ALIGNOF(struct s_" << Trans_Mangle(p) << ") == " << repr->align << ") ? 1 : -1 ];\n";
+            else
+                m_of << "#ifdef MRUSTC_C89_ALIGNCHECK\ntypedef char alignof_assert_" << Trans_Mangle(p) << "[ (__alignof(struct s_" << Trans_Mangle(p) << ") == " << c89_align(repr->align) << ") ? 1 : -1 ];\n#endif\n";
 
             m_mir_res = nullptr;
         }
@@ -2790,6 +2833,9 @@ namespace {
                     m_of << "__attribute__((section(\"" << item.m_linkage.section << "\"))) ";
                     break;
                 case Compiler::Msvc:
+                    // C89 (Visual C++ 4.x, no __declspec(allocate)): #pragma data_seg around the definition
+                    if( m_options.c89 )
+                        break;
                     m_of << "#pragma section(\"" << item.m_linkage.section << "\", read)\n";
                     m_of << "__declspec(allocate(\"" << item.m_linkage.section << "\")) ";
                     break;
@@ -2815,7 +2861,11 @@ namespace {
 
             auto type = params.monomorph(m_resolve, item.m_type);
             // statics that are zero do not require initializers, since they will be initialized to zero on program startup.
-            if( !is_zero_literal(type, encoded, params)) {
+            const bool c89_section = m_options.c89 && item.m_linkage.section != "";
+            if( c89_section ) {
+                m_of << "#pragma data_seg(\"" << item.m_linkage.section << "\")\n";
+            }
+            if( !is_zero_literal(type, encoded, params) || c89_section ) {
                 if( item.m_params.is_generic() ) {
                     m_of << "static ";
                 }
@@ -2898,6 +2948,9 @@ namespace {
             //    emit_static_ty(type, p, /*is_proto=*/false);
             //    m_of << "\t// Zero init static " << p << " : " << type << " = " << encoded << "\n";
             //}
+            if( c89_section ) {
+                m_of << "#pragma data_seg()\n";
+            }
 
             m_mir_res = nullptr;
         }
@@ -3774,6 +3827,10 @@ namespace {
             // Only applicable to MSVC (which doesn't like unaligned arguments)
             if( m_compiler != Compiler::Msvc )
                 return false;
+            // - Not C89 mode: without __declspec(align) there are no such arguments, and C's own
+            //   calling convention is kept for `extern "C"` functions (`double ceil(double)`)
+            if( m_options.c89 )
+                return false;
             size_t  size, align;
             // NOTE: Uses the Size+Align version because that doesn't panic on unsized
             MIR_ASSERT(*m_mir_res, Target_GetSizeAndAlignOf(sp, m_resolve, ty, size, align), "Unexpected generic? " << ty);
@@ -4191,6 +4248,8 @@ namespace {
                     }
                     else if( ve.op == ::MIR::eBinOp::MOD && (ty == ::HIR::CoreType::F32 || ty == ::HIR::CoreType::F64) ) {
                         // Rust's `%` truncates (C's fmod), it is not IEEE `remainder`
+                        if( m_options.c89 )
+                            m_of << "__mrustc_";  // see the floating-point intrinsics
                         if( ty == ::HIR::CoreType::F32 )
                             m_of << "fmodf";
                         else
@@ -4661,6 +4720,44 @@ namespace {
             {
                 m_of << "abort()";
                 return ;
+            }
+
+            // C89 (Visual C++ 4.x, Alpha...): a float to integer cast saturates in Rust (NaN is 0), and an
+            // out-of-range C conversion traps (Alpha's cvttq): the prelude's __mrustc_f2*
+            if( m_options.c89 && (ty == ::HIR::CoreType::F32 || ty == ::HIR::CoreType::F64)
+                && ve.type.data().is_Primitive() && ve.type != ::HIR::CoreType::F32 && ve.type != ::HIR::CoreType::F64 )
+            {
+                const char* lim = nullptr;
+                switch(ve.type.data().as_Primitive())
+                {
+                case ::HIR::CoreType::U8:   lim = "0.0, 255.0"; break;
+                case ::HIR::CoreType::I8:   lim = "-128.0, 127.0";  break;
+                case ::HIR::CoreType::U16:  lim = "0.0, 65535.0";   break;
+                case ::HIR::CoreType::I16:  lim = "-32768.0, 32767.0";  break;
+                case ::HIR::CoreType::U32:  lim = "0.0, 4294967295.0";  break;
+                case ::HIR::CoreType::I32:  lim = "-2147483648.0, 2147483647.0";    break;
+                case ::HIR::CoreType::Usize:
+                    lim = Target_GetPointerBits() == 64 ? nullptr : "0.0, 4294967295.0";
+                    if(!lim) { emit_lvalue(dst); m_of << " = __mrustc_f2u64((double)"; emit_lvalue(ve.val); m_of << ")"; return; }
+                    break;
+                case ::HIR::CoreType::Isize:
+                    lim = Target_GetPointerBits() == 64 ? nullptr : "-2147483648.0, 2147483647.0";
+                    if(!lim) { emit_lvalue(dst); m_of << " = __mrustc_f2i64((double)"; emit_lvalue(ve.val); m_of << ")"; return; }
+                    break;
+                case ::HIR::CoreType::U64:
+                    emit_lvalue(dst); m_of << " = __mrustc_f2u64((double)"; emit_lvalue(ve.val); m_of << ")";
+                    return;
+                case ::HIR::CoreType::I64:
+                    emit_lvalue(dst); m_of << " = __mrustc_f2i64((double)"; emit_lvalue(ve.val); m_of << ")";
+                    return;
+                default:
+                    break;
+                }
+                if( lim )
+                {
+                    emit_lvalue(dst); m_of << " = ("; emit_ctype(ve.type); m_of << ")__mrustc_f2int((double)"; emit_lvalue(ve.val); m_of << ", " << lim << ")";
+                    return;
+                }
             }
 
             // Standard cast
@@ -7607,12 +7704,15 @@ namespace {
                     m_of << "abort();";
                     return ;
                 }
+                // C89: the prelude's own versions (`__mrustc_sqrtf`...), apart from the C library's
+                // names, which crates such as compiler_builtins define themselves
+                const char* fpfx = m_options.c89 ? "__mrustc_" : "";
                 auto emit1 = [&](const char* op) {
                     if( name.compare(name.size() - 3, 3, "f16") == 0 ) {
                         m_of << "abort();";
                         return ;
                     }
-                    emit_lvalue(e.ret_val); m_of << " = " << op << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ")";
+                    emit_lvalue(e.ret_val); m_of << " = " << fpfx << op << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ")";
                 };
                 // > Round to nearest integer, half-way rounds away from zero
                 if( name == "rintf32" || name == "rintf64" ) {
@@ -7627,17 +7727,17 @@ namespace {
                     emit1("fabs");
                 }
                 else if( name == "copysignf32" || name == "copysignf64" ) {
-                    emit_lvalue(e.ret_val); m_of << " = copysign" << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ")";
+                    emit_lvalue(e.ret_val); m_of << " = " << fpfx << "copysign" << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ")";
                 }
                 // > Returns the integer part of an `f32`.
                 else if( name == "truncf32" || name == "truncf64" ) {
                     emit1("trunc");
                 }
                 else if( name == "powif32" || name == "powif64" ) {
-                    emit_lvalue(e.ret_val); m_of << " = pow" << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ")";
+                    emit_lvalue(e.ret_val); m_of << " = " << fpfx << "pow" << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ")";
                 }
                 else if( name == "powf32" || name == "powf64" ) {
-                    emit_lvalue(e.ret_val); m_of << " = pow" << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ")";
+                    emit_lvalue(e.ret_val); m_of << " = " << fpfx << "pow" << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ")";
                 }
                 else if( name == "expf32" || name == "expf64" ) {
                     emit1("exp");
@@ -7673,7 +7773,7 @@ namespace {
                     emit1("sin");
                 }
                 else if( name == "fmaf32" || name == "fmaf64" ) {
-                    emit_lvalue(e.ret_val); m_of << " = fma" << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", "; emit_param(e.args.at(2)); m_of << ")";
+                    emit_lvalue(e.ret_val); m_of << " = " << fpfx << "fma" << (name.back()=='2'?"f":"") << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", "; emit_param(e.args.at(2)); m_of << ")";
                 }
                 else if( name == "maxnumf32" || name == "maxnumf64" ) {
                     emit_lvalue(e.ret_val); m_of << " = ("; emit_param(e.args.at(0)); m_of << " > "; emit_param(e.args.at(1)); m_of << ") ? "; emit_param(e.args.at(0)); m_of << " : "; emit_param(e.args.at(1));
@@ -8241,9 +8341,10 @@ namespace {
                 // Emit destructors for all entries
                 if( te.size.as_Known() > 0 )
                 {
-                    m_of << indent << "for(unsigned i = 0; i < " << te.size.as_Known() << "; i++) {\n";
+                    // A block of its own for `i`: C89 has no declarations in `for` or after statements
+                    m_of << indent << "{ unsigned i; for(i = 0; i < " << te.size.as_Known() << "; i++) {\n";
                     emit_destructor_call(::MIR::LValue::new_Index(slot.clone(), ::MIR::LValue::Storage::MAX_ARG), te.inner, false, indent_level+1);
-                    m_of << "\n" << indent << "}";
+                    m_of << "\n" << indent << "} }";
                 }
                 }
             TU_ARMA(Tuple, te) {
@@ -8281,9 +8382,9 @@ namespace {
                 while(lvr.is_Field())   lvr.try_unwrap();
                 MIR_ASSERT(*m_mir_res, lvr.is_Deref(), "Access to unized type without a deref - " << lvr << " (part of " << slot << ")");
                 // Call destructor on all entries
-                m_of << indent << "for(unsigned i = 0; i < "; emit_lvalue(lvr.inner_ref()); m_of << ".META; i++) {\n";
+                m_of << indent << "{ unsigned i; for(i = 0; i < "; emit_lvalue(lvr.inner_ref()); m_of << ".META; i++) {\n";
                 emit_destructor_call(::MIR::LValue::new_Index(slot.clone(), ::MIR::LValue::Storage::MAX_ARG), te.inner, false, indent_level+1);
-                m_of << "\n" << indent << "}";
+                m_of << "\n" << indent << "} }";
                 }
             }
         }
