@@ -8804,6 +8804,11 @@ namespace {
                     m_of << "tUNIT";
                 else {
                     m_of << "TUP_" << te.size();
+                    // C89 (Visual C++ 4.x keeps 247 characters of a name): the tuple's own mangled
+                    // name, which is cut to 128 with a hash, rather than its elements' one after another
+                    if( m_options.c89 )
+                        m_of << "_" << Trans_Mangle(ty);
+                    else
                     for(const auto& t : te)
                     {
                         m_of << "_" << Trans_Mangle(t);
