@@ -2667,6 +2667,22 @@ namespace {
                 emit_ctype( ty, FMT_CB(ss, ss << (this->type_is_high_align(ty) ? "*" : "") << "_" << i;) );
             }
             m_of << ") {\n";
+            // C89 (Visual C++ 4.x): field by field, as it takes no struct-typed expression in an
+            // initializer list (and the C fields are in offset order, not declaration order)
+            if( m_options.c89 )
+            {
+                m_of << "\tstruct s_" << Trans_Mangle(p) << " rv;\n";
+                for(unsigned int i = 0; i < e.size(); i ++)
+                {
+                    const auto& ty = monomorph(e[i].ent);
+                    if( this->type_is_bad_zst(ty) )
+                        continue ;
+                    m_of << "\trv._" << i << " = " << (this->type_is_high_align(ty) ? "*" : "") << "_" << i << ";\n";
+                }
+                m_of << "\treturn rv;\n";
+                m_of << "}\n";
+                return ;
+            }
             m_of << "\tstruct s_" << Trans_Mangle(p) << " rv = {";
             bool emitted = false;
             for(unsigned int i = 0; i < e.size(); i ++)
