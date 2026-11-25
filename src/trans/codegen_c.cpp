@@ -2082,17 +2082,6 @@ namespace {
                 m_of << "struct ";
             }
             emit_ctype(ty); m_of << " {\n";
-            // C89: no `__declspec(align)`, so a zero-length array gives the struct the alignment
-            // the padding below assumes (up to 8), whatever its fields have
-            if( m_options.c89 && has_manual_align && c89_align(repr->align) > 1 )
-            {
-                switch( c89_align(repr->align) )
-                {
-                case 2: m_of << "\tuint16_t _align[0];\n"; break;
-                case 4: m_of << "\tuint32_t _align[0];\n"; break;
-                default: m_of << "\tuint64_t _align[0];\n"; break;
-                }
-            }
 
             bool has_unsized = false;
             size_t sized_fields = 0;
@@ -2187,6 +2176,18 @@ namespace {
             else if( m_options.c89 && !has_unsized && repr->size != SIZE_MAX && cur_ofs < repr->size )
             {
                 m_of << "\tuint8_t _tailpad[" << (repr->size - cur_ofs) << "];\n";
+            }
+            // C89: no `__declspec(align)`, so a zero-length array gives the struct the alignment the
+            // padding assumed (up to 8), whatever its fields have. Last (Visual C++ 4.x allows a
+            // zero-sized array nowhere else), at the end of the padded size, so it adds nothing.
+            if( m_options.c89 && has_manual_align && c89_align(repr->align) > 1 && !has_unsized && repr->size > 0 && repr->size != SIZE_MAX )
+            {
+                switch( c89_align(repr->align) )
+                {
+                case 2: m_of << "\tuint16_t _align[0];\n"; break;
+                case 4: m_of << "\tuint32_t _align[0];\n"; break;
+                default: m_of << "\tuint64_t _align[0];\n"; break;
+                }
             }
             m_of << "}";
             if(has_manual_align)
@@ -2356,7 +2357,7 @@ namespace {
             // compiler that has one (MRUSTC_C89_ALIGNCHECK, e.g. clang checking the C89 output).
             if( !m_options.c89 )
                 m_of << "typedef char alignof_assert_" << Trans_Mangle(p) << "[ (ALIGNOF(struct s_" << Trans_Mangle(p) << ") == " << repr->align << ") ? 1 : -1 ];\n";
-            else
+            else if( repr->size != SIZE_MAX )  // (an unsized one isn't given the alignment: see emit_struct_inner)
                 m_of << "#ifdef MRUSTC_C89_ALIGNCHECK\ntypedef char alignof_assert_" << Trans_Mangle(p) << "[ (__alignof(struct s_" << Trans_Mangle(p) << ") == " << c89_align(repr->align) << ") ? 1 : -1 ];\n#endif\n";
 
             m_mir_res = nullptr;
