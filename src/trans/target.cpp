@@ -136,6 +136,11 @@ namespace
                         check_path_length(key_val, 2);
                         rv.m_env_name = key_val.value.as_string();
                     }
+                    else if( key_val.path[1] == "vendor-name" )
+                    {
+                        check_path_length(key_val, 2);
+                        rv.m_vendor_name = key_val.value.as_string();
+                    }
                     else if( key_val.path[1] == "arch" )
                     {
                         check_path_length(key_val, 2);
@@ -397,6 +402,7 @@ namespace
             << "family = \"" << spec.m_family << "\"\n"
             << "os-name = \"" << spec.m_os_name << "\"\n"
             << "env-name = \"" << spec.m_env_name << "\"\n"
+            << (spec.m_vendor_name.empty() ? "" : "vendor-name = \"" + spec.m_vendor_name + "\"\n")
             //<< "arch = \"" << spec.m_arch.m_name << "\"\n"
             << "\n"
             << "[backend.c]\n"
@@ -698,6 +704,10 @@ void Target_ExportCurSpec(const ::std::string& filename)
 void Target_SetCfg(const ::std::string& target_name)
 {
     g_target = init_from_spec_name(target_name);
+
+    if( !g_target.m_vendor_name.empty() ) {
+        Cfg_SetValue("target_vendor", g_target.m_vendor_name);
+    }
 
     if(g_target.m_family == "unix") {
         Cfg_SetFlag("unix");

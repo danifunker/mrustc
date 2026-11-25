@@ -81,6 +81,7 @@ struct TargetSpec
 
     BackendOptsC    m_backend_c;
     TargetArch  m_arch;
+    ::std::string   m_vendor_name = "";  // `target_vendor`, if not the OS's default (e.g. "nt4")
 };
 
 struct TypeRepr

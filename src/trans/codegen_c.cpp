@@ -8105,7 +8105,7 @@ namespace {
 
                 else {
                     // TODO: Platform intrinsics
-                    m_of << "assert(!\"TODO: Platform intrinsic \\\"" << name << "\\\"\")";
+                    m_of << "assert(!\"TODO: Platform intrinsic '" << name << "'\")";  // No \" in it: Visual C++ 4.x's assert can't stringize that
                 }
             }
             else {
