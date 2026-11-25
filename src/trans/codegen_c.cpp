@@ -392,7 +392,9 @@ namespace {
                         m_of << "#define __mrustc_" << fn << "f(x, y) ((float)__mrustc_" << fn << "((double)(x), (double)(y)))\n";
                     m_of
                         << "#define __mrustc_fmaf(a, b, c) ((float)__mrustc_fma((double)(a), (double)(b), (double)(c)))\n"
-                        << "__declspec(dllimport) void* __stdcall InterlockedCompareExchange(void** Destination, void* Exchange, void* Comperand);\n"
+                        // kernel32's, through their import pointers (no prototype to clash with a crate's own)
+                        << "extern long (__stdcall *__imp_InterlockedExchange)(long volatile*, long);\n"
+                        << "extern void (__stdcall *__imp_Sleep)(unsigned long);\n"
                         ;
                     break;
                 }
@@ -662,12 +664,18 @@ namespace {
                     ;
                 if( m_options.c89 )
                 {
-                    // Atomics for NT 4.0: kernel32 has only the 32-bit InterlockedCompareExchange (with
-                    // PVOID arguments); everything else is a compare-exchange loop, 8 and 16 bits on the
-                    // aligned 32-bit word that holds them (little-endian). The orderings are all SeqCst.
-                    // `__mrustc_atomic_OPn` are what emit_msvc_atomic_op writes in this mode.
+                    // Atomics for NT 4.0: one 32-bit compare-exchange under a lock for the whole program
+                    // (a communal global), taken with InterlockedExchange (NT 4.0's
+                    // InterlockedCompareExchange isn't in ntrun, and NT 3.x lacks it), yielding with
+                    // Sleep(0) while it's held. Everything else is a compare-exchange loop, 8 and 16 bits
+                    // on the aligned 32-bit word that holds them (little-endian). The orderings are all
+                    // SeqCst. `__mrustc_atomic_OPn` are what emit_msvc_atomic_op writes in this mode.
                     m_of
-                        << "static uint32_t __mrustc_cas32(volatile void* p, uint32_t n, uint32_t o) { return (uint32_t)InterlockedCompareExchange((void**)p, (void*)n, (void*)o); }\n"
+                        << "volatile long __mrustc_atomic_lock;\n"
+                        << "static uint32_t __mrustc_cas32(volatile void* p, uint32_t n, uint32_t o) { uint32_t c;"
+                        << " while( (*__imp_InterlockedExchange)(&__mrustc_atomic_lock, 1) != 0 ) (*__imp_Sleep)(0);"
+                        << " c = *(volatile uint32_t*)p; if( c == o ) *(volatile uint32_t*)p = n;"
+                        << " (*__imp_InterlockedExchange)(&__mrustc_atomic_lock, 0); return c; }\n"
                         // Loads go through the compare-exchange too, for its memory barrier (Alpha orders weakly)
                         << "static uint32_t __mrustc_atomic_load(volatile void* p, unsigned bits) {"
                         << " uint32_t w;"
@@ -703,7 +711,7 @@ namespace {
                     // all the object files share it); a 64-bit access on Alpha is one instruction.
                     m_of
                         << "volatile uint32_t __mrustc_atomic64_lock;\n"
-                        << "static void __mrustc_atomic64_enter(void) { while( __mrustc_cas32(&__mrustc_atomic64_lock, 1, 0) != 0 ) { } }\n"
+                        << "static void __mrustc_atomic64_enter(void) { while( __mrustc_cas32(&__mrustc_atomic64_lock, 1, 0) != 0 ) (*__imp_Sleep)(0); }\n"
                         << "static void __mrustc_atomic64_leave(void) { __mrustc_cas32(&__mrustc_atomic64_lock, 0, 1); }\n"
                         << "static uint64_t __mrustc_atomic_cas64(volatile void* p, uint64_t n, uint64_t o) {"
                         << " uint64_t c; __mrustc_atomic64_enter(); c = *(volatile uint64_t*)p; if( c == o ) *(volatile uint64_t*)p = n; __mrustc_atomic64_leave(); return c; }\n"
