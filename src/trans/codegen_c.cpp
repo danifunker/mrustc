@@ -334,6 +334,7 @@ namespace {
                     // The same goes for the C library's headers: the few functions the C code uses directly are declared here.
                     m_of
                         << "#define inline __inline\n"
+                        << "#ifndef va_copy\n#define va_copy(d, s) ((d) = (s))\n#endif\n"
                         << "void abort(void);\n"
                         << "void* memcpy(void*, const void*, size_t);\n"
                         << "void* memmove(void*, const void*, size_t);\n"
@@ -636,8 +637,12 @@ namespace {
                     // `__mrustc_atomic_OPn` are what emit_msvc_atomic_op writes in this mode.
                     m_of
                         << "static uint32_t __mrustc_cas32(volatile void* p, uint32_t n, uint32_t o) { return (uint32_t)InterlockedCompareExchange((void**)p, (void*)n, (void*)o); }\n"
+                        // Loads go through the compare-exchange too, for its memory barrier (Alpha orders weakly)
                         << "static uint32_t __mrustc_atomic_load(volatile void* p, unsigned bits) {"
-                        << " if(bits == 8) return *(volatile uint8_t*)p; if(bits == 16) return *(volatile uint16_t*)p; return __mrustc_cas32(p, 0, 0); }\n"
+                        << " uint32_t w;"
+                        << " if(bits == 32) return __mrustc_cas32(p, 0, 0);"
+                        << " w = __mrustc_cas32((volatile void*)((uintptr_t)p & ~(uintptr_t)3), 0, 0) >> ((unsigned)((uintptr_t)p & 3) * 8);"
+                        << " return bits == 8 ? (w & 0xFFu) : (w & 0xFFFFu); }\n"
                         // Compare-exchange: returns the old value (as InterlockedCompareExchange)
                         << "static uint32_t __mrustc_atomic_cas(volatile void* p, unsigned bits, uint32_t n, uint32_t o) {"
                         << " volatile uint32_t* w; unsigned sh; uint32_t mask, cur, want;"
@@ -661,6 +666,29 @@ namespace {
                         <<   " switch(op) { case 0: n = o + v; break; case 1: n = o & v; break; case 2: n = o | v; break; case 3: n = o ^ v; break; default: n = v; break; }"
                         <<   " if( __mrustc_atomic_cas(p, bits, n & mask, o) == o ) return o;"
                         << " }"
+                        << " }\n"
+                        ;
+                    // 64 bits: under one lock for the whole program (an uninitialised global is communal, so
+                    // all the object files share it); a 64-bit access on Alpha is one instruction.
+                    m_of
+                        << "volatile uint32_t __mrustc_atomic64_lock;\n"
+                        << "static void __mrustc_atomic64_enter(void) { while( __mrustc_cas32(&__mrustc_atomic64_lock, 1, 0) != 0 ) { } }\n"
+                        << "static void __mrustc_atomic64_leave(void) { __mrustc_cas32(&__mrustc_atomic64_lock, 0, 1); }\n"
+                        << "static uint64_t __mrustc_atomic_cas64(volatile void* p, uint64_t n, uint64_t o) {"
+                        << " uint64_t c; __mrustc_atomic64_enter(); c = *(volatile uint64_t*)p; if( c == o ) *(volatile uint64_t*)p = n; __mrustc_atomic64_leave(); return c; }\n"
+                        << "static uint64_t __mrustc_atomic_rmw64(volatile void* p, int op, uint64_t v) {"
+                        << " uint64_t o, n; __mrustc_atomic64_enter(); o = *(volatile uint64_t*)p;"
+                        << " switch(op) { case 0: n = o + v; break; case 1: n = o & v; break; case 2: n = o | v; break; case 3: n = o ^ v; break; case 5: n = o; break; default: n = v; break; }"
+                        << " *(volatile uint64_t*)p = n; __mrustc_atomic64_leave(); return o; }\n"
+                        << "#define __mrustc_atomic_InterlockedCompareExchange64(p, n, o) __mrustc_atomic_cas64((p), (uint64_t)(n), (uint64_t)(o))\n"
+                        << "#define __mrustc_atomic_InterlockedExchangeAdd64(p, v) __mrustc_atomic_rmw64((p), 0, (uint64_t)(v))\n"
+                        << "#define __mrustc_atomic_InterlockedAnd64(p, v) __mrustc_atomic_rmw64((p), 1, (uint64_t)(v))\n"
+                        << "#define __mrustc_atomic_InterlockedOr64(p, v) __mrustc_atomic_rmw64((p), 2, (uint64_t)(v))\n"
+                        << "#define __mrustc_atomic_InterlockedXor64(p, v) __mrustc_atomic_rmw64((p), 3, (uint64_t)(v))\n"
+                        << "#define __mrustc_atomic_InterlockedExchange64(p, v) __mrustc_atomic_rmw64((p), 4, (uint64_t)(v))\n"
+                        << "static uint64_t __mrustc_atomicloop64(volatile uint64_t* slot, uint64_t param, uint64_t (*cb)(uint64_t, uint64_t)) {"
+                        << " uint64_t v;"
+                        << " for(;;) { v = __mrustc_atomic_rmw64(slot, 5, 0); if( __mrustc_atomic_cas64(slot, cb(v, param), v) == v ) return v; }"
                         << " }\n"
                         ;
                     for(int sz = 8; sz <= 32; sz *= 2)
@@ -2735,8 +2763,9 @@ namespace {
                     m_of << "__attribute__((weak)) ";
                     break;
                 case Compiler::Msvc:
-                    if( !m_options.c89 )
-                        m_of << "__declspec(selectany) ";
+                    // C89 (no selectany): a weak static (vtables...) is emitted by every crate that
+                    // uses it, so each object file can have its own copy.
+                    m_of << (m_options.c89 ? "static " : "__declspec(selectany) ");
                     break;
                 }
                 break;
@@ -2766,7 +2795,7 @@ namespace {
                     break;
                 }
             }
-            if( item.m_params.is_generic() ) {
+            if( item.m_params.is_generic() && !(m_options.c89 && item.m_linkage.type == HIR::Linkage::Type::Weak) ) {
                 m_of << "static ";
             }
             emit_static_ty(type, p, /*is_proto=*/true);
@@ -2789,6 +2818,9 @@ namespace {
             if( !is_zero_literal(type, encoded, params)) {
                 if( item.m_params.is_generic() ) {
                     m_of << "static ";
+                }
+                else if( m_options.c89 && item.m_linkage.type == HIR::Linkage::Type::Weak ) {
+                    m_of << "static ";  // see emit_static_proto
                 }
                 bool is_packed = emit_static_ty(type, p, /*is_proto=*/false);
                 m_of << " = ";

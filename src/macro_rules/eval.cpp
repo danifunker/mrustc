@@ -600,11 +600,12 @@ InterpolatedFragment Macro_HandlePatternCap(TokenStream& lex, MacroPatEnt::Type 
         case TOK_FLOAT:
         case TOK_STRING:
         case TOK_BYTESTRING:
+        case TOK_CSTRING:
         case TOK_RWORD_TRUE:
         case TOK_RWORD_FALSE:
             break;
         default:
-            throw ParseError::Unexpected(lex, tok, {TOK_INTEGER, TOK_FLOAT, TOK_STRING, TOK_BYTESTRING, TOK_RWORD_TRUE, TOK_RWORD_FALSE});
+            throw ParseError::Unexpected(lex, tok, {TOK_INTEGER, TOK_FLOAT, TOK_STRING, TOK_BYTESTRING, TOK_CSTRING, TOK_RWORD_TRUE, TOK_RWORD_FALSE});
         }
         return InterpolatedFragment( TokenTree(lex.get_edition(), lex.get_hygiene(), tok) );
     }
@@ -1134,6 +1135,7 @@ namespace
                     continue;
                 return true;
             case TOK_BYTESTRING:
+            case TOK_CSTRING:
             case TOK_STRING:
             case TOK_INTEGER:
             case TOK_FLOAT:
@@ -1297,6 +1299,7 @@ namespace
             case TOK_FLOAT:
             case TOK_STRING:
             case TOK_BYTESTRING:
+            case TOK_CSTRING:
             case TOK_RWORD_TRUE:
             case TOK_RWORD_FALSE:
                 lex.consume();
@@ -2001,6 +2004,7 @@ namespace
             case TOK_FLOAT:
             case TOK_STRING:
             case TOK_BYTESTRING:
+            case TOK_CSTRING:
             case TOK_RWORD_TRUE:
             case TOK_RWORD_FALSE:
                 lex.consume();

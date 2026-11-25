@@ -3515,7 +3515,9 @@ bool MIR_Optimise_ConstPropagate(::MIR::TypeResolve& state, ::MIR::Function& fcn
                     }
                 TU_ARMA(Borrow, se) {
                     // Shared borrows of statics can be better represented with the ItemAddr constant
-                    if( se.type == HIR::BorrowType::Shared && se.val.m_wrappers.empty() && se.val.m_root.is_Static() )
+                    // - Not raw ones (`&raw const STATIC`): ItemAddr's type is a borrow, which a pointer-typed
+                    //   use (e.g. a call argument) then fails validation with.
+                    if( se.type == HIR::BorrowType::Shared && !se.is_raw && se.val.m_wrappers.empty() && se.val.m_root.is_Static() )
                     {
                         e->src = ::MIR::RValue::make_Constant( ::MIR::Constant::make_ItemAddr({ box$(se.val.m_root.as_Static()) }) );
                         changed = true;
