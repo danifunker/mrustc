@@ -3098,6 +3098,28 @@ namespace {
             TRACE_FUNCTION_F(p);
 
             m_of << "// EXTERN extern \"" << item.m_abi << "\" " << p << "\n";
+            // C89 (old C libraries): an extern function on f16/f128, which mrustc doesn't support
+            // anyway (std's f128 maths: tanhf128...), is a local stub that aborts, so it links
+            if( m_options.c89 )
+            {
+                auto is_f16_128 = [&](const ::HIR::TypeRef& t) {
+                    auto m = params.monomorph(m_resolve, t);
+                    return m == ::HIR::CoreType::F128 || m == ::HIR::CoreType::F16;
+                    };
+                bool uses = is_f16_128(item.m_return);
+                for(const auto& a : item.m_args)
+                    uses |= is_f16_128(a.second);
+                if( uses )
+                {
+                    if( item.m_linkage.name != "" )
+                        m_of << "#define " << Trans_Mangle(p) << " " << item.m_linkage.name << "\n";
+                    m_of << "static ";
+                    emit_function_header(p, item, params);
+                    m_of << " { abort(); }\n";
+                    m_mir_res = nullptr;
+                    return ;
+                }
+            }
             // For MSVC, make a static wrapper that goes and calls the actual function
             if( item.m_linkage.name.rfind("llvm.", 0) == 0 )
             {
