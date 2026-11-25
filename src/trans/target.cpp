@@ -217,6 +217,11 @@ namespace
                             check_path_length(key_val, 3);
                             rv.m_backend_c.m_c_compiler = key_val.value.as_string();
                         }
+                        else if( key_val.path[2] == "c89" )
+                        {
+                            check_path_length(key_val, 3);
+                            rv.m_backend_c.m_c89 = key_val.value.as_bool();
+                        }
                         else if( key_val.path[2] == "emulate-i128" )
                         {
                             check_path_length(key_val, 3);
@@ -397,6 +402,7 @@ namespace
             << "[backend.c]\n"
             << "variant = \"" << H::c_variant_name(spec.m_backend_c.m_codegen_mode) << "\"\n"
             << "target = \"" << spec.m_backend_c.m_c_compiler << "\"\n"
+            << (spec.m_backend_c.m_c89 ? "c89 = true\n" : "")
             << "compiler-opts = ["; for(const auto& s : spec.m_backend_c.m_compiler_opts) of << "\"" << s << "\","; of << "]\n"
             << "linker-opts-pre = ["; for(const auto& s : spec.m_backend_c.m_linker_opts_pre) of << "\"" << s << "\","; of << "]\n"
             << "linker-opts-post = ["; for(const auto& s : spec.m_backend_c.m_linker_opts_post) of << "\"" << s << "\","; of << "]\n"

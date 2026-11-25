@@ -68,6 +68,10 @@ struct BackendOptsC
     ::std::vector< ::std::string>   m_compiler_opts;
     ::std::vector< ::std::string>   m_linker_opts_pre;
     ::std::vector< ::std::string>   m_linker_opts_post;
+    // `backend.c.c89`: C89 for old Microsoft C (Visual C++ 4.x, for Windows NT 4.0 on Alpha,
+    // MIPS and PowerPC): no `inline`, `long long`, `__alignof`, `__declspec(align|noreturn|selectany)`,
+    // designated initializers or declarations after statements; alignment capped at 8.
+    bool    m_c89 = false;
 };
 struct TargetSpec
 {
