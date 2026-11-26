@@ -2856,6 +2856,12 @@ namespace {
 
             TRACE_FUNCTION_F(p);
             auto type = params.monomorph(m_resolve, item.m_type);
+            // C89: a static with a link name (#[no_mangle], #[export_name]) is defined under it
+            // (_tls_used, _tls_index...), the way functions are
+            if( m_options.c89 && item.m_linkage.name != "" && item.m_linkage.name[0] != '\1' )
+            {
+                m_of << "#define " << Trans_Mangle(p) << " " << item.m_linkage.name << "\n";
+            }
             switch(item.m_linkage.type)
             {
             case HIR::Linkage::Type::External:
