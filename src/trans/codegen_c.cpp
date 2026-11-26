@@ -274,6 +274,12 @@ namespace {
         // C89: the alignment the C compiler gives each struct emitted so far (the fields' own, or
         // the one the tail padding gives), for the padding of the structs that contain them
         ::std::map< ::HIR::TypeRef, size_t> m_c89_struct_align;
+        // C89 (Alpha): extern functions taking a 4-byte aggregate (Option<fn>, NonNull...), which
+        // they get as a 32-bit integer (see c89_ffi_word); their mangled names, and the types
+        // whose converter (__mrustc_ffi_TYPE) is emitted
+        ::std::set< ::std::string>  m_c89_ffi_fns;
+        ::std::set< ::std::string>  m_c89_ffi_convs;
+        bool m_c89_ffi_decl = false;
         size_t c89_c_align(const ::HIR::TypeRef& t, size_t rust_align) const
         {
             if( const auto* te = t.data().opt_Array() ) {
@@ -2028,6 +2034,10 @@ namespace {
                 {
                     if(i != 0)  m_of << ",";
                     m_of << " ";
+                    // C89: a C-ABI function pointer takes a 4-byte aggregate as a 32-bit integer
+                    if( te.m_abi != ABI_RUST && this->c89_ffi_word(te.m_arg_types[i]) )
+                        m_of << "uint32_t";
+                    else
                     this->emit_ctype( te.m_arg_types[i], FMT_CB(os, os << (this->type_is_high_align(te.m_arg_types[i]) ? "*":"");) );
                 }
                 if( te.is_variadic ) {
@@ -2287,6 +2297,7 @@ namespace {
                     {
                         m_of << "typedef char sizeof_assert_"; emit_ctype(ty); m_of << "[ (sizeof("; emit_ctype(ty); m_of << ") == " << repr->size << ") ? 1 : -1 ];\n";
                     }
+                    c89_ffi_converter(ty);
                 }
                 }
             TU_ARMA(Function, te) {
@@ -2391,6 +2402,7 @@ namespace {
                 m_of << "typedef char alignof_assert_" << Trans_Mangle(p) << "[ (ALIGNOF(struct s_" << Trans_Mangle(p) << ") == " << repr->align << ") ? 1 : -1 ];\n";
             else if( repr->size != SIZE_MAX )  // (an unsized one isn't given the alignment: see emit_struct_inner)
                 m_of << "#ifdef MRUSTC_C89_ALIGNCHECK\ntypedef char alignof_assert_" << Trans_Mangle(p) << "[ (__alignof(struct s_" << Trans_Mangle(p) << ") == " << c89_c_align(item_ty, repr->align) << ") ? 1 : -1 ];\n#endif\n";
+            c89_ffi_converter(item_ty);
 
             m_mir_res = nullptr;
         }
@@ -2416,6 +2428,7 @@ namespace {
             {
                 m_of << "typedef char sizeof_assert_" << Trans_Mangle(p) << "[ (sizeof(union u_" << Trans_Mangle(p) << ") == " << repr->size << ") ? 1 : -1 ];\n";
             }
+            c89_ffi_converter(item_ty);
 
             m_mir_res = nullptr;
         }
@@ -2615,6 +2628,7 @@ namespace {
 
             size_t exp_size = (repr->size > 0 ? repr->size : (m_options.disallow_empty_structs ? 1 : 0));
             m_of << "typedef char sizeof_assert_" << Trans_Mangle(p) << "[ (sizeof(struct e_" << Trans_Mangle(p) << ") == " << exp_size << ") ? 1 : -1 ];\n";
+            c89_ffi_converter(item_ty);
 
             m_mir_res = nullptr;
         }
@@ -3269,7 +3283,12 @@ namespace {
             {
                 m_of << "extern ";
             }
+            // C89: the 4-byte aggregates it takes go as 32-bit integers (see c89_ffi_word)
+            if( m_options.c89 )
+                m_c89_ffi_fns.insert(FMT(Trans_Mangle(p)));
+            m_c89_ffi_decl = m_options.c89;
             emit_function_header(p, item, params);
+            m_c89_ffi_decl = false;
             if( item.m_linkage.name != "" )
             {
                 switch(m_compiler)
@@ -3891,6 +3910,37 @@ namespace {
             }
             else {
                 return false;
+            }
+        }
+        // C89: a 4-byte aggregate (Option<extern fn>, Option<&T>, NonNull, a transparent wrapper)
+        // passed to an extern function goes as a 32-bit integer. Visual C++ for Alpha passes a
+        // struct in a 64-bit register without sign-extending it, and the callee (kernel32's
+        // CreateThread with std's Option<start routine>) takes the whole register as the
+        // pointer: its upper half was junk. A 32-bit integer is sign-extended, as Alpha wants.
+        bool c89_ffi_word(const ::HIR::TypeRef& ty) const
+        {
+            if( !m_options.c89 )
+                return false;
+            if( ty.data().is_Primitive() || ty.data().is_Pointer() || ty.data().is_Borrow() || ty.data().is_Function() || ty.data().is_NamedFunction() )
+                return false;
+            if( this->type_is_bad_zst(ty) )
+                return false;
+            size_t size = 0, align = 0;
+            if( !Target_GetSizeAndAlignOf(sp, m_resolve, ty, size, align) )
+                return false;
+            return size == 4;
+        }
+        void c89_ffi_converter(const ::HIR::TypeRef& ty)
+        {
+            if( !this->c89_ffi_word(ty) )
+                return;
+            auto name = FMT(Trans_Mangle(ty));
+            if( m_c89_ffi_convs.insert(name).second )
+            {
+                // (inline: unused ones cost nothing; emitted after each 4-byte type's definition)
+                m_of << "static inline uint32_t __mrustc_ffi_" << name << "(";
+                emit_ctype(ty, FMT_CB(os, os << "v";));
+                m_of << ") { uint32_t r; memcpy(&r, &v, 4); return r; }\n";
             }
         }
         bool type_is_high_align(const ::HIR::TypeRef& ty) const
@@ -5216,6 +5266,7 @@ namespace {
                 }
             }
 
+            bool c89_ffi_call = false;  // see c89_ffi_word
             TU_MATCH_HDRA( (e.fcn), {)
             TU_ARMA(Value, e2) {
                 {
@@ -5225,6 +5276,7 @@ namespace {
 
                     const auto& ret_ty = ty.data().as_Function().m_rettype;
                     omit_assign |= ret_ty.data().is_Diverge();
+                    c89_ffi_call = m_options.c89 && ty.data().as_Function().m_abi != ABI_RUST;
                     if( !omit_assign )
                     {
                         emit_lvalue(e.ret_val); m_of << " = ";
@@ -5289,6 +5341,8 @@ namespace {
                     }
                 }
                 m_of << Trans_Mangle(e2);
+                if( m_options.c89 && m_c89_ffi_fns.count(FMT(Trans_Mangle(e2))) )
+                    c89_ffi_call = true;
                 }
             TU_ARMA(Intrinsic, e2) {
                 const auto& name = e2.name;
@@ -5320,6 +5374,11 @@ namespace {
                 if( this->type_is_bad_zst(ty) )
                 {
                     m_of << "zarg" << j;
+                    continue;
+                }
+                if( c89_ffi_call && this->c89_ffi_word(ty) )
+                {
+                    m_of << "__mrustc_ffi_" << Trans_Mangle(ty) << "("; emit_param(e.args[j]); m_of << ")";
                     continue;
                 }
                 emit_param(e.args[j]);
@@ -6334,6 +6393,9 @@ namespace {
                         ss << "\n\t\t";
                         // TODO: If the type has a high alignment, emit as a pointer? Might have FFI issues
                         auto ty = params.monomorph(m_resolve, item.m_args[i].second);
+                        if( m_c89_ffi_decl && this->c89_ffi_word(ty) )
+                            ss << "uint32_t arg" << i;
+                        else
                         this->emit_ctype( ty, FMT_CB(os, os << (this->type_is_high_align(ty) ? "*":"") << "arg" << i;) );
                         if( item.m_variadic || i+1 < item.m_args.size() )    m_of << ",";
                         m_of << " // " << ty;
